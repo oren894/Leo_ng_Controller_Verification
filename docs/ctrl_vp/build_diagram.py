@@ -48,7 +48,7 @@ o.append(box(22, 242, 164, 80, "Generation parameters", ["block / loop / branch 
 # APB agent
 o.append(box(228, 34, 164, 50, "Sequencer", ["pulls apb items from", "the active sequence"], *TEAL))
 o.append(box(228, 98, 164, 94, "Driver", ["word -> APB writes (inactive", "IMEM / CR bank, swap reg)", "random idle gaps between", "transfers, @(posedge clk)", "reads status / error regs"], *TEAL))
-o.append(box(228, 206, 164, 116, "Monitor", ["psel / penable / pwrite /", "paddr / pwdata", "pready / prdata / pslverr", "-> apb_item, broadcast to", "reference model + scoreboard"], *TEAL))
+o.append(box(228, 206, 164, 116, "Monitor", ["psel / penable / pwrite /", "paddr / pwdata", "pready / prdata / pslverr", "-> apb_item, broadcast to", "reference model"], *TEAL))
 
 # DUT
 o.append(f'<rect x="424" y="8" width="176" height="330" rx="8" fill="{DUT[0]}" stroke="{DUT[1]}" stroke-width="1.2"/>')
@@ -65,8 +65,7 @@ o.append(box(632, 158, 122, 168, "Cache Unit agent", ["CRM + DMA model", "bank t
 o.append(group(782, 8, 130, 330, "Scoreboards", "#7aa84a", "none"))
 o.append(box(790, 34, 114, 56, "Bus scoreboard", ["4 buses / cycle", "predicted vs observed"], *GREEN))
 o.append(box(790, 102, 114, 56, "XMEM scoreboard", ["xmem_read_addr / en", "predicted vs observed"], *GREEN))
-o.append(box(790, 170, 114, 56, "APB scoreboard", ["prdata / pready", "pslverr predicted"], *GREEN))
-o.append(box(790, 244, 114, 82, "Coverage subscriber", ["per-word metadata", "from reference model", "ops . hazards . branches", "stall x event cross"], *PINK))
+o.append(box(790, 176, 114, 82, "Coverage subscriber", ["per-word metadata", "from reference model", "ops . hazards . branches", "stall x event cross"], *PINK))
 
 # reference model
 o.append(box(424, 450, 336, 100, "Reference model (cycle-accurate CTRL ISS)", ["state: PC . active IMEM/CR bank . LR[16] . CR[2][16] . halted", "per cycle: fetch . read snapshot . COND . 3 LR lanes . pack buses", "snapshot for own reads, post-write values for buses + xmem addr", "APB map: banks, swap, pslverr on CR0/CR1 / unmapped"], *BLUE))
@@ -87,15 +86,13 @@ o.append(arrow(600, 389, 632, 389, "#5a9a2a"))
 o.append(arrow(700, 450, 700, 424, "#2f6fb5"))
 o.append(arrow(754, 62, 790, 62, "#5a9a2a"))
 o.append(arrow(754, 130, 790, 130, "#5a9a2a"))
-o.append(poly([(392,300),(410,300),(410,346),(782,346),(782,212),(790,212)], "#5a9a2a"))  # apb monitor -> apb sb
 # byte/apb stream to RM
 o.append(poly([(310,322),(310,356),(416,356),(416,500),(424,500)], "#6b5bd2", "5,4"))
 # RM -> scoreboards
 o.append(poly([(760,500),(776,500),(776,60),(790,60)], "#2f6fb5"))
 o.append(poly([(776,130),(790,130)], "#2f6fb5"))
-o.append(poly([(776,186),(790,186)], "#2f6fb5"))
 # RM -> coverage
-o.append(poly([(760,530),(772,530),(772,285),(790,285)], "#b83a6a"))
+o.append(poly([(760,530),(772,530),(772,217),(790,217)], "#b83a6a"))
 o.append(poly([(632,314),(616,314),(616,450)], "#6b5bd2", "5,4"))  # cache unit agent -> RM
 # program item -> RM / stall agent (metadata)
 o.append(poly([(22,203),(14,203),(14,362),(416,362)], "#6b5bd2", "5,4", head=False))

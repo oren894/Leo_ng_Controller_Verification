@@ -41,7 +41,7 @@
 <li>Deterministic — fixed pattern: transfer, idle, idle, idle</li>
 </ul>
 <h4>Monitor</h4>
-<p>Collects every APB transfer into an <code>apb_item</code> (address, data, direction, <code>prdata</code>, <code>pslverr</code>) and broadcasts it to the reference model and APB scoreboard. Always active.</p>
+<p>Collects every APB transfer into an <code>apb_item</code> (address, data, direction, <code>prdata</code>, <code>pslverr</code>) and broadcasts it to the reference model. Always active.</p>
 
 <h3>3.2 Output agents (slave, monitor-only)</h3>
 <table>
@@ -236,7 +236,6 @@ watchdog_cycles = max_dyn_words + (number_of_bank_fills x max_fill_latency) + ma
 <tr><th>Scoreboard</th><th>Predicted vs observed</th></tr>
 <tr><td>Bus scoreboard</td><td>All four VLIW buses, each cycle: slot fields and resolved CR/LR operands (post-write values)</td></tr>
 <tr><td>XMEM scoreboard</td><td><code>xmem_read_en</code> and <code>xmem_read_addr</code> each cycle</td></tr>
-<tr><td>APB scoreboard</td><td><code>prdata</code>, <code>pready</code>, <code>pslverr</code> for every transfer</td></tr>
 <tr><td>Probe scoreboard</td><td>Internal state every cycle: <code>PC</code>, <code>next_pc</code>, <code>inst_vliw</code>, <code>branch_taken</code>, the three LR write lanes, the full LR file, active bank IDs, <code>fetch_stopped</code></td></tr>
 </table>
 <h3>6.3 Assertions (SVA, bound to the DUT)</h3>
