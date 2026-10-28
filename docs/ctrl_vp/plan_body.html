@@ -20,6 +20,8 @@
 <div class="diagram">__SVG__</div>
 <ul>
 <li>The <b>virtual sequence</b> builds a random terminating program, loads it through the APB agent into the inactive bank, swaps, and lets it run. It is the only place that knows the whole program.</li>
+<li>The <b>Cache Unit agent</b> sends stall events, bank-tag changes and table configuration to the reference model, so predicted timing includes the stalls the DUT really saw.</li>
+<li>The <b>probe agent</b> samples CTRL's internal signals every cycle; the <b>probe scoreboard</b> compares them with the reference model's internal state.</li>
 <li>The <b>reference model</b> is a cycle-accurate model of CTRL. It sees the same APB traffic (via the APB monitor) and the same program image, and predicts the four buses and the XMEM address for every cycle.</li>
 <li>Each <b>scoreboard</b> receives predicted items from the reference model and observed items from the relevant monitor, and compares them.</li>
 <li>The <b>coverage subscriber</b> receives per-word metadata from the reference model and samples the functional covergroups.</li>
@@ -45,11 +47,38 @@
 <table>
 <tr><th>Agent</th><th>Signals monitored</th><th>Item produced</th></tr>
 <tr><td>VLIW bus agent</td><td><code>mult_vliw_bus, acc_vliw_bus, aaq_vliw_bus, str_vliw_bus</code> every cycle</td><td><code>bus_item</code>: cycle number + four bus values</td></tr>
-<tr><td>Cache Unit agent</td><td><code>xmem_read_addr, xmem_read_en</code>; drives the stall (see 3.3)</td><td><code>xmem_item</code>: address when enable is high, plus stall start / end events</td></tr>
+<tr><td>Cache Unit agent</td><td><code>xmem_read_addr, xmem_read_en</code>; drives the stall and feeds the reference model (see 3.4)</td><td><code>xmem_item</code>: address when enable is high, plus stall start / end events</td></tr>
 </table>
 <div class="warn"><b class="t">Bus format is TBD</b>The spec leaves <code>MULT_BUS_W / ACC_BUS_W / AAQ_BUS_W / STR_BUS_W</code> as "impl". The bus agent samples them as raw vectors; a <code>bus_layout</code> class (slot fields + resolved CR/LR operand fields) is needed before the scoreboard can compare field-by-field.</div>
 
-<h3>3.3 Cache Unit agent (CRM + DMA model) — the "mini mind"</h3>
+<h3>3.3 Probe agent (monitor-only, internal signals)</h3>
+<p>The boundary agents only see the buses, the XMEM port and APB. A wrong PC, a wrong LR write that is never read again, or a wrong branch decision can stay invisible there. The <b>probe agent</b> looks <b>inside</b> the DUT: it is a passive monitor attached with <code>bind</code> (or hierarchical references) to CTRL's internal signals. It never drives anything.</p>
+<h4>Probed signals</h4>
+<table>
+<tr><th>Group</th><th>Signals (spec names)</th><th>Used to check</th></tr>
+<tr><td>Fetch</td><td><code>PC, next_pc, imem_read_addr_a, imem_read_addr_b, imem_a, imem_b, imem_rd_sel, inst_vliw</code></td><td>PC trace; <code>inst_vliw == imem[active][PC]</code>; the parallel read of <code>PC+1</code> and the target</td></tr>
+<tr><td>Branch</td><td><code>branch_taken</code>, resolved target</td><td>Taken / not taken and target for every COND op</td></tr>
+<tr><td>LR write lanes</td><td><code>lr_write_en[3], lr_write_idx[3], lr_write_data[3]</code></td><td>Each lane's write, per cycle, before it can reach any bus</td></tr>
+<tr><td>Register files</td><td><code>LR[0..15]</code>, active <code>CR[0..15]</code></td><td>Full architectural state each cycle; <code>CR0 = 0</code>, <code>CR1 = 1</code></td></tr>
+<tr><td>Control state</td><td>active IMEM bank, active CR bank, <code>fetch_stopped</code> (after HALT)</td><td>Bank-swap timing; fetch stops after HALT and restarts at PC 0</td></tr>
+<tr><td>Operand paths</td><td>snapshot values read by the lanes / COND, and the post-write values packed on each bus</td><td>The two read semantics (snapshot vs. post-write) side by side</td></tr>
+</table>
+<h4>What it gives the environment</h4>
+<ul>
+<li><b>Early, precise failures.</b> Each cycle it builds a <code>probe_item</code> (cycle, PC, next PC, word, branch result, three LR writes, LR file, bank IDs, <code>fetch_stopped</code>). The probe scoreboard flags the first internal divergence at the exact cycle and unit, instead of a bus mismatch many cycles later.</li>
+<li><b>Visibility of masked bugs.</b> A wrong LR write that no later word reads, or a wrong <code>PC</code> that fetches an identical word, still shows up.</li>
+<li><b>Real hazard coverage.</b> The coverage subscriber samples hazards from what the DUT <i>actually did</i> (LR written in cycle N and read in cycle N), not only from what the generator intended.</li>
+<li><b>Assertion hooks.</b> The SVA checks of §6.3 bind to the same probe interface.</li>
+</ul>
+<h4>Implementation notes</h4>
+<ul>
+<li>All RTL hierarchy names live in <b>one</b> mapping file (<code>ctrl_probe_if</code>). If the RTL is renamed, only that file changes.</li>
+<li>Sampled once per cycle through a clocking block, after the cycle has settled.</li>
+<li>Enabled by <code>PROBE_EN</code>; disabled automatically for runs where internals do not exist (e.g. gate-level).</li>
+<li>Internal names come from the note in spec §3 (<code>PC, next_pc, branch_taken, imem_*, inst_vliw, lr_write_*</code>); see Q9.</li>
+</ul>
+
+<h3>3.4 Cache Unit agent (CRM + DMA model) — the "mini mind"</h3>
 <p>The Cache Unit sits between XMEM and the IPU. It is the only block that knows <b>which addresses XMEM currently holds</b>, so it is the one that stalls the controller. The agent is therefore a <b>behavioural model of the Cache Unit</b>, not a random wait generator: a stall appears only when the requested bank is not ready.</p>
 <h4>State and rules (from the Cache Unit spec)</h4>
 <ul>
@@ -71,6 +100,14 @@
 <tr><td><code>TARGETED</code></td><td>Uses the reference model's look-ahead: delays exactly the bank the next load will hit — in a branch word, in a word whose offset LR is written in the same word, in the last word before HALT, at the <code>jump_back</code> boundary</td><td>The corner cases the program really contains</td></tr>
 </table>
 <p>Everything is seeded, so a failing fill pattern replays exactly. The table configuration (ids, banklists, <code>jump_back</code>, <code>repetitions</code>) arrives through config_db from the virtual sequence; in the real system the RISC-V sets it up over <code>riscv_cfg_bus</code>, which is outside the CTRL environment.</p>
+<h4>Feeding the reference model</h4>
+<p>The Cache Unit agent has a <b>monitor that broadcasts to the reference model</b> through an analysis port, like the APB monitor does. The model cannot predict stalls from the program alone, because stall timing depends on the Cache Unit's bank state and the DMA fill policy. It receives:</p>
+<ul>
+<li><b>Stall events</b> — stall start and stall end, with the address and bank that caused them.</li>
+<li><b>Bank / tag state changes</b> — tag published, bank freed, free-all — so the model's view of XMEM matches the agent's.</li>
+<li><b>Table configuration</b> — once per kernel.</li>
+</ul>
+<p>The model uses these to hold PC, word and buses during a stall. In the other direction, the model gives the agent a look-ahead of upcoming load addresses (used by <code>TARGETED</code>).</p>
 <h4>Two consequences for the program generator</h4>
 <ul>
 <li><b>Load addresses must be legal for the table.</b> A load must stay inside the table <code>size</code>, walk banks in order, and may revisit a freed bank only on a new repetition. A load to a freed bank that DMA will never refill would hang the DUT forever, so that is a <b>generator bug</b>, not a DUT bug. <code>validate</code> checks the planned address sequence (§4.4, stage 6).</li>
@@ -175,7 +212,7 @@ watchdog_cycles = max_dyn_words + (number_of_bank_fills x max_fill_latency) + ma
 </table>
 
 <h2>5. Reference Model</h2>
-<p>A cycle-accurate model of CTRL (not transaction-level: the spec's behaviour is defined per cycle). It receives APB items from the APB monitor, so it tracks bank writes and swaps exactly like the DUT.</p>
+<p>A cycle-accurate model of CTRL (not transaction-level: the spec's behaviour is defined per cycle). It receives APB items from the APB monitor (bank writes and swaps) and <b>stall events, bank-tag changes and table configuration from the Cache Unit agent</b>, so it tracks the DUT exactly, including stall timing.</p>
 <h3>5.1 State</h3>
 <p><code>PC</code> (7 bits), active IMEM bank, active CR bank, <code>LR[16]</code> (32 bit), <code>CR[2][16]</code> with <code>CR0=0</code>, <code>CR1=1</code>, <code>halted</code>, <code>imem_rd_sel</code>.</p>
 <h3>5.2 Per-cycle behaviour</h3>
@@ -189,7 +226,7 @@ watchdog_cycles = max_dyn_words + (number_of_bank_fills x max_fill_latency) + ma
 <tr><td>APB</td><td>Register map, inactive-bank writes, swap effect on the next fetch cycle; <code>pslverr</code> on write to <code>CR0/CR1</code>, read-only registers, or unmapped addresses; the LR file is not writable over APB.</td></tr>
 <tr><td>Stall (Q1)</td><td>The Cache Unit agent is the source of truth for when a stall starts and ends, and reports stall events to the model. During a stall the model holds PC and word, holds the buses and drives <code>xmem_read_en</code> low in the bubble. Separately, the agent self-checks every stall decision against the CRM tag rule.</td></tr>
 </table>
-<p>The model also emits per-word metadata (ops, branch taken, hazard flags, loop iteration) to the coverage subscriber and a look-ahead stream (upcoming load addresses) to the Cache Unit agent.</p>
+<p>For the probe scoreboard the model also emits a predicted <code>probe_item</code> every cycle (PC, next PC, word, branch result, LR writes, LR file, bank IDs). The model also emits per-word metadata (ops, branch taken, hazard flags, loop iteration) to the coverage subscriber and a look-ahead stream (upcoming load addresses) to the Cache Unit agent.</p>
 
 <h2>6. Scoreboards</h2>
 <h3>6.1 Comparison mechanism</h3>
@@ -200,10 +237,11 @@ watchdog_cycles = max_dyn_words + (number_of_bank_fills x max_fill_latency) + ma
 <tr><td>Bus scoreboard</td><td>All four VLIW buses, each cycle: slot fields and resolved CR/LR operands (post-write values)</td></tr>
 <tr><td>XMEM scoreboard</td><td><code>xmem_read_en</code> and <code>xmem_read_addr</code> each cycle</td></tr>
 <tr><td>APB scoreboard</td><td><code>prdata</code>, <code>pready</code>, <code>pslverr</code> for every transfer</td></tr>
+<tr><td>Probe scoreboard</td><td>Internal state every cycle: <code>PC</code>, <code>next_pc</code>, <code>inst_vliw</code>, <code>branch_taken</code>, the three LR write lanes, the full LR file, active bank IDs, <code>fetch_stopped</code></td></tr>
 </table>
 <h3>6.3 Assertions (SVA, bound to the DUT)</h3>
 <ul>
-<li>After a branch word, the next cycle's word is the one at <code>taken ? target : PC+1</code> (no bubble).</li>
+<li>(Bound on the probe interface.) After a branch word, the next cycle's word is the one at <code>taken ? target : PC+1</code> (no bubble).</li>
 <li>After <code>HALT</code>, no new word is fetched until the next kernel starts.</li>
 <li><code>xmem_read_en</code> is high only when the load slot is non-NOP.</li>
 <li><code>CR0 == 0</code> and <code>CR1 == 1</code> always.</li>
@@ -228,7 +266,7 @@ watchdog_cycles = max_dyn_words + (number_of_bank_fills x max_fill_latency) + ma
 </ul>
 <h3>7.3 Required cross coverage</h3>
 <ul>
-<li><b>Snapshot hazards:</b> LR written in word N × read by {lane source, branch operand, each bus operand, load offset} in the same word.</li>
+<li><b>Snapshot hazards (sampled from the probe):</b> LR written in word N × read by {lane source, branch operand, each bus operand, load offset} in the same word.</li>
 <li><b>Stall × event:</b> {each fill mode} × {load in branch word, load after LR write, last word before HALT, first word after taken branch, back-to-back loads, first access of a bank, <code>jump_back</code> boundary}.</li>
 <li><b>Cache-state events:</b> tag miss then release; bank freed then re-read on a new repetition; all 16 banks used (wrap of <code>offset[19:10] % NUM_BANKS</code>); free-all on <code>offset == FFFF</code>; stall length buckets (0, short, bank-fill length).</li>
 <li>COND op × taken × same-word LR write to a branch operand.</li>
@@ -261,12 +299,13 @@ watchdog_cycles = max_dyn_words + (number_of_bank_fills x max_fill_latency) + ma
 <tr><td>Q5</td><td><code>XMEM_ADDR_W</code> vs. the 32-bit <code>CR + LR</code> sum: truncate or error?</td><td>Reference model address width.</td></tr>
 <tr><td>Q6</td><td>Bus layouts (<code>*_BUS_W</code>), APB address map and the IMEM word width (decoded VLIW is wider than 32 bits, so multiple APB writes per word?) are not defined.</td><td>Needed for <code>bus_layout</code> and <code>apb_load_program_seq</code>.</td></tr>
 <tr><td>Q7</td><td>Spec text says "11 mnemonics" and "seven branches"; the tables list 8 LR ops and 6 COND ops (5 branches + HALT). §10.1 refers to "see §10" for the same-destination rule.</td><td>Plan follows the tables.</td></tr>
+<tr><td>Q9</td><td>The RTL hierarchy and names of the internal signals are not known. The spec lists them only in a note (§3) and says they do not cross the stage boundary; <code>CR/LR</code> file storage layout and the bank-select registers are also not described.</td><td>Needed for the single <code>ctrl_probe_if</code> mapping file.</td></tr>
 <tr><td>Q8</td><td>The Cache Unit itself is not under test. Its behaviour is modelled by the agent from the spec (tag rule, bank release, <code>jump_back</code>). The spec has a few inconsistencies (e.g. <code>FFFF</code> used both as a 14-bit tag and as an offset; <code>bank.tag = i</code> in §9.2) that the model must resolve.</td><td>Agent model details.</td></tr>
 </table>
 
 <h2>10. Milestones</h2>
 <ul>
-<li><b>M1</b> — APB agent with clock plumbing, directed program load, reference model for non-branch words, bus scoreboard.</li>
+<li><b>M1</b> — APB agent with clock plumbing, probe agent + <code>ctrl_probe_if</code> mapping, directed program load, reference model for non-branch words, bus and probe scoreboards.</li>
 <li><b>M2</b> — Generator stages 1–3 and 6–7 (spine + guarded loops, LR ops only), branch model, no-bubble assertions.</li>
 <li><b>M3</b> — Register manager, loads, <code>BR</code> indirect jumps, <code>LRD</code> pairs, hazard knobs, APB error injection.</li>
 <li><b>M4</b> — Cache Unit agent (tag model + fill modes, after Q1 is closed), load-address planner in the generator, REAL test (back-to-back kernels).</li>

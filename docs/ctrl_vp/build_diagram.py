@@ -29,7 +29,7 @@ GREEN=("#eaf5df","#5a9a2a","#37661a"); PINK=("#fbe6ee","#b83a6a","#8a1c48")
 colors=["#2e9e7c","#c4573a","#5a9a2a","#2f6fb5","#b83a6a","#6b5bd2","#888888","#d08a00"]
 
 o = []
-o.append('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 600" font-family="Arial, Helvetica, sans-serif">')
+o.append('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 680" font-family="Arial, Helvetica, sans-serif">')
 o.append('<defs>' + "".join(
     f'<marker id="a{c[1:]}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="{c}"/></marker>'
     for c in colors) + '</defs>')
@@ -69,10 +69,12 @@ o.append(box(790, 170, 114, 56, "APB scoreboard", ["prdata / pready", "pslverr p
 o.append(box(790, 244, 114, 82, "Coverage subscriber", ["per-word metadata", "from reference model", "ops . hazards . branches", "stall x event cross"], *PINK))
 
 # reference model
-o.append(box(424, 380, 336, 100, "Reference model (cycle-accurate CTRL ISS)", ["state: PC . active IMEM/CR bank . LR[16] . CR[2][16] . halted", "per cycle: fetch . read snapshot . COND . 3 LR lanes . pack buses", "snapshot for own reads, post-write values for buses + xmem addr", "APB map: banks, swap, pslverr on CR0/CR1 / unmapped"], *BLUE))
-o.append(box(22, 380, 190, 100, "Watchdog + SVA", ["computed cycle bound", "no-bubble-on-branch", "HALT -> fetch stops", "xmem_read_en only on load"], *BROWN))
-o.append(box(228, 380, 176, 100, "TB top", ["clk / rst generator", "single clock owner", "vif -> APB agent,", "bus agent, XMEM agent"], *DUT))
+o.append(box(424, 450, 336, 100, "Reference model (cycle-accurate CTRL ISS)", ["state: PC . active IMEM/CR bank . LR[16] . CR[2][16] . halted", "per cycle: fetch . read snapshot . COND . 3 LR lanes . pack buses", "snapshot for own reads, post-write values for buses + xmem addr", "APB map: banks, swap, pslverr on CR0/CR1 / unmapped"], *BLUE))
+o.append(box(22, 450, 190, 100, "Watchdog + SVA", ["computed cycle bound", "no-bubble-on-branch", "HALT -> fetch stops", "xmem_read_en only on load"], *BROWN))
+o.append(box(228, 450, 176, 100, "TB top", ["clk / rst generator", "single clock owner", "vif -> APB agent,", "bus agent, XMEM agent"], *DUT))
 
+o.append(box(424, 354, 176, 70, "Probe agent (monitor-only)", ["bind / hier. probes inside DUT", "PC . word . branch . LR writes", "LR/CR files . bank ids -> probe_item"], *RED))
+o.append(box(632, 354, 122, 70, "Probe scoreboard", ["internal state / cycle", "predicted vs observed"], *GREEN))
 # arrows
 g="#2e9e7c"
 o.append(arrow(186, 60, 228, 60, "#2e9e7c"))                 # vseq -> sequencer
@@ -80,29 +82,33 @@ o.append(arrow(392, 140, 424, 140, "#2e9e7c"))               # driver -> DUT
 o.append(arrow(600, 90, 632, 90, "#c4573a"))                 # DUT -> bus agent
 o.append(arrow(600, 240, 632, 240, "#c4573a"))               # DUT -> xmem agent
 o.append(poly([(632,300),(612,300),(612,270),(600,270)], "#d08a00", "4,3"))   # stall -> DUT
+o.append(arrow(512, 338, 512, 354, "#c4573a", "3,3"))
+o.append(arrow(600, 389, 632, 389, "#5a9a2a"))
+o.append(arrow(700, 450, 700, 424, "#2f6fb5"))
 o.append(arrow(754, 62, 790, 62, "#5a9a2a"))
 o.append(arrow(754, 130, 790, 130, "#5a9a2a"))
 o.append(poly([(392,300),(410,300),(410,346),(782,346),(782,212),(790,212)], "#5a9a2a"))  # apb monitor -> apb sb
 # byte/apb stream to RM
-o.append(poly([(310,322),(310,356),(416,356),(416,430),(424,430)], "#6b5bd2", "5,4"))
+o.append(poly([(310,322),(310,356),(416,356),(416,500),(424,500)], "#6b5bd2", "5,4"))
 # RM -> scoreboards
-o.append(poly([(760,430),(776,430),(776,60),(790,60)], "#2f6fb5"))
+o.append(poly([(760,500),(776,500),(776,60),(790,60)], "#2f6fb5"))
 o.append(poly([(776,130),(790,130)], "#2f6fb5"))
 o.append(poly([(776,186),(790,186)], "#2f6fb5"))
 # RM -> coverage
-o.append(poly([(760,462),(772,462),(772,285),(790,285)], "#b83a6a"))
+o.append(poly([(760,530),(772,530),(772,285),(790,285)], "#b83a6a"))
+o.append(poly([(632,314),(616,314),(616,450)], "#6b5bd2", "5,4"))  # cache unit agent -> RM
 # program item -> RM / stall agent (metadata)
 o.append(poly([(22,203),(14,203),(14,362),(416,362)], "#6b5bd2", "5,4", head=False))
 # legend
-o.append('<rect x="8" y="494" width="904" height="98" rx="6" fill="#fff" stroke="#ccc"/>')
-o.append('<text x="22" y="514" font-weight="bold" font-size="10" fill="#333">Legend</text>')
+o.append('<rect x="8" y="566" width="904" height="98" rx="6" fill="#fff" stroke="#ccc"/>')
+o.append('<text x="22" y="586" font-weight="bold" font-size="10" fill="#333">Legend</text>')
 leg=[("#eeeefb","#6b5bd2","Sequences"),("#e1f3ec","#2e9e7c","Input agent"),("#f1efe9","#555","DUT / TB"),("#fbe9e4","#c4573a","Output agents"),("#e6effa","#2f6fb5","Reference model"),("#eaf5df","#5a9a2a","Scoreboards"),("#fbe6ee","#b83a6a","Coverage"),("#fbecd6","#b5772a","Config / checks")]
 for i,(f,s,t) in enumerate(leg):
     x=80+i*104
-    o.append(f'<rect x="{x}" y="504" width="14" height="12" rx="3" fill="{f}" stroke="{s}"/><text x="{x+20}" y="514" font-size="8.5" fill="#444">{t}</text>')
-ll=[("#2e9e7c",None,"Stimulus / APB flow"),("#c4573a",None,"DUT -> output agents"),("#5a9a2a",None,"Agent -> scoreboard"),("#2f6fb5",None,"RM -> scoreboard"),("#6b5bd2","5,4","Program image + APB stream to RM"),("#d08a00","4,3","Cache Unit stall (signal TBD)"),("#b83a6a",None,"Coverage metadata")]
+    o.append(f'<rect x="{x}" y="576" width="14" height="12" rx="3" fill="{f}" stroke="{s}"/><text x="{x+20}" y="586" font-size="8.5" fill="#444">{t}</text>')
+ll=[("#2e9e7c",None,"Stimulus / APB flow"),("#c4573a",None,"DUT -> output agents"),("#5a9a2a",None,"Agent -> scoreboard"),("#2f6fb5",None,"RM -> scoreboard"),("#6b5bd2","5,4","Streams to RM: APB, program, cache events"),("#d08a00","4,3","Cache Unit stall (signal TBD)"),("#b83a6a",None,"Coverage metadata")]
 for i,(c,d,t) in enumerate(ll):
-    x=22+(i%4)*224; y=540+(i//4)*22
+    x=22+(i%4)*224; y=612+(i//4)*22
     dd=f' stroke-dasharray="{d}"' if d else ''
     o.append(f'<line x1="{x}" y1="{y}" x2="{x+34}" y2="{y}" stroke="{c}" stroke-width="1.6"{dd} marker-end="url(#a{c[1:]})"/><text x="{x+42}" y="{y+3}" font-size="8.5" fill="#444">{t}</text>')
 o.append('</svg>')
