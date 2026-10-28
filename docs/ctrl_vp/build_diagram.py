@@ -43,7 +43,7 @@ o.append(group(618, 8, 150, 330, "Output / slave agents", "#e0805f"))
 o.append(box(22, 34, 164, 52, "Virtual sequence", ["program kind · test type · num kernels", "builds + loads + runs"], *PURPLE))
 o.append(box(22, 98, 164, 66, "Program builder", ["CFG · SCC · loop guards", "register manager · fill words", "validate · encode"], *PURPLE))
 o.append(box(22, 176, 164, 54, "ctrl_program item", ["VLIW words[ ] · CR init[ ]", "metadata (loops, BR targets)"], *BROWN))
-o.append(box(22, 242, 164, 80, "Generation parameters", ["block / loop / branch weights", "LR-op mix · hazard knobs", "APB gap prob. · stall policy", "error-injection probs"], *BROWN))
+o.append(box(22, 242, 164, 80, "Generation parameters", ["block / loop / branch weights", "LR-op mix · hazard knobs", "APB gap prob. · fill policy", "error-injection probs"], *BROWN))
 
 # APB agent
 o.append(box(228, 34, 164, 50, "Sequencer", ["pulls apb items from", "the active sequence"], *TEAL))
@@ -59,7 +59,7 @@ o.append(f'<text x="512" y="326" text-anchor="middle" font-size="8" fill="#888">
 
 # outputs
 o.append(box(632, 34, 122, 110, "VLIW bus agent", ["monitor-only", "mult / acc / aaq / str", "_vliw_bus every cycle", "-> bus_item", "(cycle, 4 buses)"], *RED))
-o.append(box(632, 158, 122, 168, "XMEM agent", ["slave on xmem_read_*", "monitor: addr + en", "drives stall (TBD sig)", "\"mini mind\":", "policy + RM look-ahead", "stall modes: random,", "bursty, targeted,", "tag-miss-like long"], *RED))
+o.append(box(632, 158, 122, 168, "Cache Unit agent", ["CRM + DMA model", "bank tags: tag/table/flush", "tag miss -> stall CTRL", "(signal TBD)", "\"mini mind\" = DMA fill", "policy: JIT, slow, bursty,", "targeted (RM look-ahead)", "tables: jump_back, reps"], *RED))
 
 # scoreboards
 o.append(group(782, 8, 130, 330, "Scoreboards", "#7aa84a", "none"))
@@ -100,7 +100,7 @@ leg=[("#eeeefb","#6b5bd2","Sequences"),("#e1f3ec","#2e9e7c","Input agent"),("#f1
 for i,(f,s,t) in enumerate(leg):
     x=80+i*104
     o.append(f'<rect x="{x}" y="504" width="14" height="12" rx="3" fill="{f}" stroke="{s}"/><text x="{x+20}" y="514" font-size="8.5" fill="#444">{t}</text>')
-ll=[("#2e9e7c",None,"Stimulus / APB flow"),("#c4573a",None,"DUT -> output agents"),("#5a9a2a",None,"Agent -> scoreboard"),("#2f6fb5",None,"RM -> scoreboard"),("#6b5bd2","5,4","Program image + APB stream to RM"),("#d08a00","4,3","Stall request (signal TBD)"),("#b83a6a",None,"Coverage metadata")]
+ll=[("#2e9e7c",None,"Stimulus / APB flow"),("#c4573a",None,"DUT -> output agents"),("#5a9a2a",None,"Agent -> scoreboard"),("#2f6fb5",None,"RM -> scoreboard"),("#6b5bd2","5,4","Program image + APB stream to RM"),("#d08a00","4,3","Cache Unit stall (signal TBD)"),("#b83a6a",None,"Coverage metadata")]
 for i,(c,d,t) in enumerate(ll):
     x=22+(i%4)*224; y=540+(i//4)*22
     dd=f' stroke-dasharray="{d}"' if d else ''
