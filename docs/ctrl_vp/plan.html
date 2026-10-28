@@ -1,0 +1,323 @@
+<!doctype html><html><head><meta charset="utf-8"><title>CTRL Verification Plan</title><link rel="stylesheet" href="style.css"></head><body><div class="cover">
+<h1>Control Stage (CTRL) — Verification Plan</h1>
+<div class="s1">UVM Verification Environment &nbsp;|&nbsp; Version 0.1 (draft)</div>
+<div class="s2">Project: ctrl_uvm_environment &nbsp;|&nbsp; Source specs: Control Stage, Cache Unit &nbsp;|&nbsp; October 2026</div>
+</div>
+
+<h2>1. Overview</h2>
+<p>The Control (CTRL) stage is the first stage of the IPU pipeline. It owns the program counter, a double-buffered instruction memory (2 banks × 128 decoded VLIW words), the CR and LR register files, the branch resolver and three parallel LR ALU lanes. It drives four per-stage VLIW buses (<code>mult/acc/aaq/str_vliw_bus</code>) and the XMEM read address (<code>xmem_read_addr</code>, <code>xmem_read_en</code>). A RISC-V host configures it through an <b>APB slave</b> port.</p>
+<p>This plan covers <b>CTRL only</b>. The downstream stages (MULT, ACC, AAQ, STORE) and XMEM data return are not in the environment: their buses and the XMEM address port are <i>monitored</i>, not consumed.</p>
+<h3>1.1 What makes CTRL hard to verify</h3>
+<ul>
+<li><b>Programs are the stimulus.</b> The DUT's behaviour is defined by the VLIW program in its IMEM. Random <i>legal and terminating</i> programs are the main source of coverage (§4).</li>
+<li><b>Two read semantics in one cycle.</b> CTRL's own reads (LR-ALU sources, branch operands) use the <i>prior-cycle snapshot</i>; the values forwarded on the buses and used for <code>xmem_read_addr</code> are the <i>post-LR-write</i> values.</li>
+<li><b>No-bubble branches.</b> Both <code>PC+1</code> and the branch target are fetched in parallel; the correct word must always be present next cycle.</li>
+<li><b>Double-buffered configuration.</b> The host writes the inactive IMEM/CR bank over APB while the active bank executes.</li>
+<li><b>Stalls.</b> XMEM stalls must change timing only, never results (see open question Q1, §9).</li>
+</ul>
+
+<h2>2. Environment Architecture</h2>
+<div class="diagram"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 600" font-family="Arial, Helvetica, sans-serif">
+<defs><marker id="a2e9e7c" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2e9e7c"/></marker><marker id="ac4573a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#c4573a"/></marker><marker id="a5a9a2a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#5a9a2a"/></marker><marker id="a2f6fb5" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2f6fb5"/></marker><marker id="ab83a6a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b83a6a"/></marker><marker id="a6b5bd2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#6b5bd2"/></marker><marker id="a888888" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#888888"/></marker><marker id="ad08a00" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#d08a00"/></marker></defs>
+<rect x="8" y="8" width="192" height="330" rx="10" fill="none" stroke="#8b7fe0" stroke-width="1" stroke-dasharray="5,4" opacity=".8"/><text x="104.0" y="23" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#8b7fe0">Stimulus</text>
+<rect x="214" y="8" width="192" height="330" rx="10" fill="none" stroke="#2e9e7c" stroke-width="1" stroke-dasharray="5,4" opacity=".8"/><text x="310.0" y="23" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#2e9e7c">APB agent (master, clk input)</text>
+<rect x="618" y="8" width="150" height="330" rx="10" fill="none" stroke="#e0805f" stroke-width="1" stroke-dasharray="5,4" opacity=".8"/><text x="693.0" y="23" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#e0805f">Output / slave agents</text>
+<rect x="22" y="34" width="164" height="52" rx="6" fill="#eeeefb" stroke="#6b5bd2" stroke-width="1.2"/><text x="104.0" y="51" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#3a2f9c">Virtual sequence</text><text x="104.0" y="67" text-anchor="middle" font-size="8.2" fill="#3a2f9c">program kind · test type · num kernels</text><text x="104.0" y="79" text-anchor="middle" font-size="8.2" fill="#3a2f9c">builds + loads + runs</text>
+<rect x="22" y="98" width="164" height="66" rx="6" fill="#eeeefb" stroke="#6b5bd2" stroke-width="1.2"/><text x="104.0" y="115" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#3a2f9c">Program builder</text><text x="104.0" y="131" text-anchor="middle" font-size="8.2" fill="#3a2f9c">CFG · SCC · loop guards</text><text x="104.0" y="143" text-anchor="middle" font-size="8.2" fill="#3a2f9c">register manager · fill words</text><text x="104.0" y="155" text-anchor="middle" font-size="8.2" fill="#3a2f9c">validate · encode</text>
+<rect x="22" y="176" width="164" height="54" rx="6" fill="#fbecd6" stroke="#b5772a" stroke-width="1.2"/><text x="104.0" y="193" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#7a4a0e">ctrl_program item</text><text x="104.0" y="209" text-anchor="middle" font-size="8.2" fill="#7a4a0e">VLIW words[ ] · CR init[ ]</text><text x="104.0" y="221" text-anchor="middle" font-size="8.2" fill="#7a4a0e">metadata (loops, BR targets)</text>
+<rect x="22" y="242" width="164" height="80" rx="6" fill="#fbecd6" stroke="#b5772a" stroke-width="1.2"/><text x="104.0" y="259" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#7a4a0e">Generation parameters</text><text x="104.0" y="275" text-anchor="middle" font-size="8.2" fill="#7a4a0e">block / loop / branch weights</text><text x="104.0" y="287" text-anchor="middle" font-size="8.2" fill="#7a4a0e">LR-op mix · hazard knobs</text><text x="104.0" y="299" text-anchor="middle" font-size="8.2" fill="#7a4a0e">APB gap prob. · stall policy</text><text x="104.0" y="311" text-anchor="middle" font-size="8.2" fill="#7a4a0e">error-injection probs</text>
+<rect x="228" y="34" width="164" height="50" rx="6" fill="#e1f3ec" stroke="#2e9e7c" stroke-width="1.2"/><text x="310.0" y="51" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#0f6b50">Sequencer</text><text x="310.0" y="67" text-anchor="middle" font-size="8.2" fill="#0f6b50">pulls apb items from</text><text x="310.0" y="79" text-anchor="middle" font-size="8.2" fill="#0f6b50">the active sequence</text>
+<rect x="228" y="98" width="164" height="94" rx="6" fill="#e1f3ec" stroke="#2e9e7c" stroke-width="1.2"/><text x="310.0" y="115" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#0f6b50">Driver</text><text x="310.0" y="131" text-anchor="middle" font-size="8.2" fill="#0f6b50">word -> APB writes (inactive</text><text x="310.0" y="143" text-anchor="middle" font-size="8.2" fill="#0f6b50">IMEM / CR bank, swap reg)</text><text x="310.0" y="155" text-anchor="middle" font-size="8.2" fill="#0f6b50">random idle gaps between</text><text x="310.0" y="167" text-anchor="middle" font-size="8.2" fill="#0f6b50">transfers, @(posedge clk)</text><text x="310.0" y="179" text-anchor="middle" font-size="8.2" fill="#0f6b50">reads status / error regs</text>
+<rect x="228" y="206" width="164" height="116" rx="6" fill="#e1f3ec" stroke="#2e9e7c" stroke-width="1.2"/><text x="310.0" y="223" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#0f6b50">Monitor</text><text x="310.0" y="239" text-anchor="middle" font-size="8.2" fill="#0f6b50">psel / penable / pwrite /</text><text x="310.0" y="251" text-anchor="middle" font-size="8.2" fill="#0f6b50">paddr / pwdata</text><text x="310.0" y="263" text-anchor="middle" font-size="8.2" fill="#0f6b50">pready / prdata / pslverr</text><text x="310.0" y="275" text-anchor="middle" font-size="8.2" fill="#0f6b50">-> apb_item, broadcast to</text><text x="310.0" y="287" text-anchor="middle" font-size="8.2" fill="#0f6b50">reference model + scoreboard</text>
+<rect x="424" y="8" width="176" height="330" rx="8" fill="#f1efe9" stroke="#555555" stroke-width="1.2"/>
+<text x="512" y="26" text-anchor="middle" font-weight="bold" font-size="11" fill="#333333">DUT - CTRL stage</text>
+<text x="512" y="58" text-anchor="middle" font-size="9" fill="#333333">APB slave</text>
+<text x="512" y="86" text-anchor="middle" font-size="9" fill="#333333">inst mem (2 banks x 128)</text>
+<text x="512" y="114" text-anchor="middle" font-size="9" fill="#333333">PC + dual-read fetch</text>
+<text x="512" y="142" text-anchor="middle" font-size="9" fill="#333333">COND evaluator</text>
+<text x="512" y="170" text-anchor="middle" font-size="9" fill="#333333">LR ALU x3 lanes</text>
+<text x="512" y="198" text-anchor="middle" font-size="9" fill="#333333">LR file 16 x 32b</text>
+<text x="512" y="226" text-anchor="middle" font-size="9" fill="#333333">CR file 2 x 16 x 32b</text>
+<text x="512" y="254" text-anchor="middle" font-size="9" fill="#333333">bus packer (4 VLIW buses)</text>
+<text x="512" y="282" text-anchor="middle" font-size="9" fill="#333333">XMEM read-address gen</text>
+<text x="512" y="326" text-anchor="middle" font-size="8" fill="#888">internal state: not on boundary</text>
+<rect x="632" y="34" width="122" height="110" rx="6" fill="#fbe9e4" stroke="#c4573a" stroke-width="1.2"/><text x="693.0" y="51" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#8a2f15">VLIW bus agent</text><text x="693.0" y="67" text-anchor="middle" font-size="8.2" fill="#8a2f15">monitor-only</text><text x="693.0" y="79" text-anchor="middle" font-size="8.2" fill="#8a2f15">mult / acc / aaq / str</text><text x="693.0" y="91" text-anchor="middle" font-size="8.2" fill="#8a2f15">_vliw_bus every cycle</text><text x="693.0" y="103" text-anchor="middle" font-size="8.2" fill="#8a2f15">-> bus_item</text><text x="693.0" y="115" text-anchor="middle" font-size="8.2" fill="#8a2f15">(cycle, 4 buses)</text>
+<rect x="632" y="158" width="122" height="168" rx="6" fill="#fbe9e4" stroke="#c4573a" stroke-width="1.2"/><text x="693.0" y="175" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#8a2f15">XMEM agent</text><text x="693.0" y="191" text-anchor="middle" font-size="8.2" fill="#8a2f15">slave on xmem_read_*</text><text x="693.0" y="203" text-anchor="middle" font-size="8.2" fill="#8a2f15">monitor: addr + en</text><text x="693.0" y="215" text-anchor="middle" font-size="8.2" fill="#8a2f15">drives stall (TBD sig)</text><text x="693.0" y="227" text-anchor="middle" font-size="8.2" fill="#8a2f15">"mini mind":</text><text x="693.0" y="239" text-anchor="middle" font-size="8.2" fill="#8a2f15">policy + RM look-ahead</text><text x="693.0" y="251" text-anchor="middle" font-size="8.2" fill="#8a2f15">stall modes: random,</text><text x="693.0" y="263" text-anchor="middle" font-size="8.2" fill="#8a2f15">bursty, targeted,</text><text x="693.0" y="275" text-anchor="middle" font-size="8.2" fill="#8a2f15">tag-miss-like long</text>
+<rect x="782" y="8" width="130" height="330" rx="10" fill="none" stroke="#7aa84a" stroke-width="1" stroke-dasharray="none" opacity=".8"/><text x="847.0" y="23" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#7aa84a">Scoreboards</text>
+<rect x="790" y="34" width="114" height="56" rx="6" fill="#eaf5df" stroke="#5a9a2a" stroke-width="1.2"/><text x="847.0" y="51" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#37661a">Bus scoreboard</text><text x="847.0" y="67" text-anchor="middle" font-size="8.2" fill="#37661a">4 buses / cycle</text><text x="847.0" y="79" text-anchor="middle" font-size="8.2" fill="#37661a">predicted vs observed</text>
+<rect x="790" y="102" width="114" height="56" rx="6" fill="#eaf5df" stroke="#5a9a2a" stroke-width="1.2"/><text x="847.0" y="119" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#37661a">XMEM scoreboard</text><text x="847.0" y="135" text-anchor="middle" font-size="8.2" fill="#37661a">xmem_read_addr / en</text><text x="847.0" y="147" text-anchor="middle" font-size="8.2" fill="#37661a">predicted vs observed</text>
+<rect x="790" y="170" width="114" height="56" rx="6" fill="#eaf5df" stroke="#5a9a2a" stroke-width="1.2"/><text x="847.0" y="187" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#37661a">APB scoreboard</text><text x="847.0" y="203" text-anchor="middle" font-size="8.2" fill="#37661a">prdata / pready</text><text x="847.0" y="215" text-anchor="middle" font-size="8.2" fill="#37661a">pslverr predicted</text>
+<rect x="790" y="244" width="114" height="82" rx="6" fill="#fbe6ee" stroke="#b83a6a" stroke-width="1.2"/><text x="847.0" y="261" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#8a1c48">Coverage subscriber</text><text x="847.0" y="277" text-anchor="middle" font-size="8.2" fill="#8a1c48">per-word metadata</text><text x="847.0" y="289" text-anchor="middle" font-size="8.2" fill="#8a1c48">from reference model</text><text x="847.0" y="301" text-anchor="middle" font-size="8.2" fill="#8a1c48">ops . hazards . branches</text><text x="847.0" y="313" text-anchor="middle" font-size="8.2" fill="#8a1c48">stall x event cross</text>
+<rect x="424" y="380" width="336" height="100" rx="6" fill="#e6effa" stroke="#2f6fb5" stroke-width="1.2"/><text x="592.0" y="397" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#1b4a85">Reference model (cycle-accurate CTRL ISS)</text><text x="592.0" y="413" text-anchor="middle" font-size="8.2" fill="#1b4a85">state: PC . active IMEM/CR bank . LR[16] . CR[2][16] . halted</text><text x="592.0" y="425" text-anchor="middle" font-size="8.2" fill="#1b4a85">per cycle: fetch . read snapshot . COND . 3 LR lanes . pack buses</text><text x="592.0" y="437" text-anchor="middle" font-size="8.2" fill="#1b4a85">snapshot for own reads, post-write values for buses + xmem addr</text><text x="592.0" y="449" text-anchor="middle" font-size="8.2" fill="#1b4a85">APB map: banks, swap, pslverr on CR0/CR1 / unmapped</text>
+<rect x="22" y="380" width="190" height="100" rx="6" fill="#fbecd6" stroke="#b5772a" stroke-width="1.2"/><text x="117.0" y="397" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#7a4a0e">Watchdog + SVA</text><text x="117.0" y="413" text-anchor="middle" font-size="8.2" fill="#7a4a0e">computed cycle bound</text><text x="117.0" y="425" text-anchor="middle" font-size="8.2" fill="#7a4a0e">no-bubble-on-branch</text><text x="117.0" y="437" text-anchor="middle" font-size="8.2" fill="#7a4a0e">HALT -> fetch stops</text><text x="117.0" y="449" text-anchor="middle" font-size="8.2" fill="#7a4a0e">xmem_read_en only on load</text>
+<rect x="228" y="380" width="176" height="100" rx="6" fill="#f1efe9" stroke="#555555" stroke-width="1.2"/><text x="316.0" y="397" text-anchor="middle" font-weight="bold" font-size="10.5" fill="#333333">TB top</text><text x="316.0" y="413" text-anchor="middle" font-size="8.2" fill="#333333">clk / rst generator</text><text x="316.0" y="425" text-anchor="middle" font-size="8.2" fill="#333333">single clock owner</text><text x="316.0" y="437" text-anchor="middle" font-size="8.2" fill="#333333">vif -> APB agent,</text><text x="316.0" y="449" text-anchor="middle" font-size="8.2" fill="#333333">bus agent, XMEM agent</text>
+<path d="M186,60 L228,60" stroke="#2e9e7c" stroke-width="1.5" fill="none" marker-end="url(#a2e9e7c)"/>
+<path d="M392,140 L424,140" stroke="#2e9e7c" stroke-width="1.5" fill="none" marker-end="url(#a2e9e7c)"/>
+<path d="M600,90 L632,90" stroke="#c4573a" stroke-width="1.5" fill="none" marker-end="url(#ac4573a)"/>
+<path d="M600,240 L632,240" stroke="#c4573a" stroke-width="1.5" fill="none" marker-end="url(#ac4573a)"/>
+<polyline points="632,300 612,300 612,270 600,270" stroke="#d08a00" stroke-width="1.5" fill="none" stroke-dasharray="4,3" marker-end="url(#ad08a00)"/>
+<path d="M754,62 L790,62" stroke="#5a9a2a" stroke-width="1.5" fill="none" marker-end="url(#a5a9a2a)"/>
+<path d="M754,130 L790,130" stroke="#5a9a2a" stroke-width="1.5" fill="none" marker-end="url(#a5a9a2a)"/>
+<polyline points="392,300 410,300 410,346 782,346 782,212 790,212" stroke="#5a9a2a" stroke-width="1.5" fill="none" marker-end="url(#a5a9a2a)"/>
+<polyline points="310,322 310,356 416,356 416,430 424,430" stroke="#6b5bd2" stroke-width="1.5" fill="none" stroke-dasharray="5,4" marker-end="url(#a6b5bd2)"/>
+<polyline points="760,430 776,430 776,60 790,60" stroke="#2f6fb5" stroke-width="1.5" fill="none" marker-end="url(#a2f6fb5)"/>
+<polyline points="776,130 790,130" stroke="#2f6fb5" stroke-width="1.5" fill="none" marker-end="url(#a2f6fb5)"/>
+<polyline points="776,186 790,186" stroke="#2f6fb5" stroke-width="1.5" fill="none" marker-end="url(#a2f6fb5)"/>
+<polyline points="760,462 772,462 772,285 790,285" stroke="#b83a6a" stroke-width="1.5" fill="none" marker-end="url(#ab83a6a)"/>
+<polyline points="22,203 14,203 14,362 416,362" stroke="#6b5bd2" stroke-width="1.5" fill="none" stroke-dasharray="5,4"/>
+<rect x="8" y="494" width="904" height="98" rx="6" fill="#fff" stroke="#ccc"/>
+<text x="22" y="514" font-weight="bold" font-size="10" fill="#333">Legend</text>
+<rect x="80" y="504" width="14" height="12" rx="3" fill="#eeeefb" stroke="#6b5bd2"/><text x="100" y="514" font-size="8.5" fill="#444">Sequences</text>
+<rect x="184" y="504" width="14" height="12" rx="3" fill="#e1f3ec" stroke="#2e9e7c"/><text x="204" y="514" font-size="8.5" fill="#444">Input agent</text>
+<rect x="288" y="504" width="14" height="12" rx="3" fill="#f1efe9" stroke="#555"/><text x="308" y="514" font-size="8.5" fill="#444">DUT / TB</text>
+<rect x="392" y="504" width="14" height="12" rx="3" fill="#fbe9e4" stroke="#c4573a"/><text x="412" y="514" font-size="8.5" fill="#444">Output agents</text>
+<rect x="496" y="504" width="14" height="12" rx="3" fill="#e6effa" stroke="#2f6fb5"/><text x="516" y="514" font-size="8.5" fill="#444">Reference model</text>
+<rect x="600" y="504" width="14" height="12" rx="3" fill="#eaf5df" stroke="#5a9a2a"/><text x="620" y="514" font-size="8.5" fill="#444">Scoreboards</text>
+<rect x="704" y="504" width="14" height="12" rx="3" fill="#fbe6ee" stroke="#b83a6a"/><text x="724" y="514" font-size="8.5" fill="#444">Coverage</text>
+<rect x="808" y="504" width="14" height="12" rx="3" fill="#fbecd6" stroke="#b5772a"/><text x="828" y="514" font-size="8.5" fill="#444">Config / checks</text>
+<line x1="22" y1="540" x2="56" y2="540" stroke="#2e9e7c" stroke-width="1.6" marker-end="url(#a2e9e7c)"/><text x="64" y="543" font-size="8.5" fill="#444">Stimulus / APB flow</text>
+<line x1="246" y1="540" x2="280" y2="540" stroke="#c4573a" stroke-width="1.6" marker-end="url(#ac4573a)"/><text x="288" y="543" font-size="8.5" fill="#444">DUT -> output agents</text>
+<line x1="470" y1="540" x2="504" y2="540" stroke="#5a9a2a" stroke-width="1.6" marker-end="url(#a5a9a2a)"/><text x="512" y="543" font-size="8.5" fill="#444">Agent -> scoreboard</text>
+<line x1="694" y1="540" x2="728" y2="540" stroke="#2f6fb5" stroke-width="1.6" marker-end="url(#a2f6fb5)"/><text x="736" y="543" font-size="8.5" fill="#444">RM -> scoreboard</text>
+<line x1="22" y1="562" x2="56" y2="562" stroke="#6b5bd2" stroke-width="1.6" stroke-dasharray="5,4" marker-end="url(#a6b5bd2)"/><text x="64" y="565" font-size="8.5" fill="#444">Program image + APB stream to RM</text>
+<line x1="246" y1="562" x2="280" y2="562" stroke="#d08a00" stroke-width="1.6" stroke-dasharray="4,3" marker-end="url(#ad08a00)"/><text x="288" y="565" font-size="8.5" fill="#444">Stall request (signal TBD)</text>
+<line x1="470" y1="562" x2="504" y2="562" stroke="#b83a6a" stroke-width="1.6" marker-end="url(#ab83a6a)"/><text x="512" y="565" font-size="8.5" fill="#444">Coverage metadata</text>
+</svg></div>
+<ul>
+<li>The <b>virtual sequence</b> builds a random terminating program, loads it through the APB agent into the inactive bank, swaps, and lets it run. It is the only place that knows the whole program.</li>
+<li>The <b>reference model</b> is a cycle-accurate model of CTRL. It sees the same APB traffic (via the APB monitor) and the same program image, and predicts the four buses and the XMEM address for every cycle.</li>
+<li>Each <b>scoreboard</b> receives predicted items from the reference model and observed items from the relevant monitor, and compares them.</li>
+<li>The <b>coverage subscriber</b> receives per-word metadata from the reference model and samples the functional covergroups.</li>
+<li>The clock and reset are owned by the TB top. The APB agent only <i>receives</i> <code>clk</code> through its virtual interface.</li>
+</ul>
+
+<h2>3. Agents</h2>
+<p>All agents use one generic <code>dv_agent</code> pattern (as in the RX DMA environment): sequencer + driver + monitor, with <code>is_master</code> selecting driver/sequencer. Output agents are monitor-only.</p>
+
+<h3>3.1 APB agent (master, clock as input)</h3>
+<h4>Sequencer</h4><p>Pulls <code>apb_item</code>s from the active sequence and forwards them to the driver one at a time.</p>
+<h4>Driver</h4>
+<p>Drives <code>apb_psel / penable / pwrite / paddr / pwdata</code> and honours <code>pready</code> wait states. It only waits on <code>@(posedge vif.clk)</code>; it never generates the clock. The idle gap between transfers is randomised, three modes selected once per test via config_db:</p>
+<ul>
+<li>Back-to-back — no idle cycles (<code>gap_probability = 0</code>)</li>
+<li>Sparse random — idle cycles with probability 75%</li>
+<li>Deterministic — fixed pattern: transfer, idle, idle, idle</li>
+</ul>
+<h4>Monitor</h4>
+<p>Collects every APB transfer into an <code>apb_item</code> (address, data, direction, <code>prdata</code>, <code>pslverr</code>) and broadcasts it to the reference model and APB scoreboard. Always active.</p>
+
+<h3>3.2 Output agents (slave, monitor-only)</h3>
+<table>
+<tr><th>Agent</th><th>Signals monitored</th><th>Item produced</th></tr>
+<tr><td>VLIW bus agent</td><td><code>mult_vliw_bus, acc_vliw_bus, aaq_vliw_bus, str_vliw_bus</code> every cycle</td><td><code>bus_item</code>: cycle number + four bus values</td></tr>
+<tr><td>XMEM agent</td><td><code>xmem_read_addr, xmem_read_en</code> (+ stall output, see 3.3)</td><td><code>xmem_item</code>: address when enable is high</td></tr>
+</table>
+<div class="warn"><b class="t">Bus format is TBD</b>The spec leaves <code>MULT_BUS_W / ACC_BUS_W / AAQ_BUS_W / STR_BUS_W</code> as "impl". The bus agent samples them as raw vectors; a <code>bus_layout</code> class (slot fields + resolved CR/LR operand fields) is needed before the scoreboard can compare field-by-field.</div>
+
+<h3>3.3 XMEM stall agent — the "mini mind"</h3>
+<p>The XMEM agent is a reactive slave on the XMEM read port. It owns a small <b>stall policy</b> that decides, for every XMEM access, how long to hold the controller off. It has no sequencer; its behaviour comes from the policy and a look-ahead from the reference model.</p>
+<p><code>stall_cycles = policy.decide(access)</code> &nbsp; where &nbsp; <code>access = {addr, is_branch_cycle, offset_lr_written_this_word, is_last_word_before_HALT, back_to_back_count}</code></p>
+<table>
+<tr><th>Policy mode</th><th>Behaviour</th><th>What it hunts</th></tr>
+<tr><td><code>NONE</code></td><td>0 stall cycles</td><td>Baseline throughput</td></tr>
+<tr><td><code>RANDOM</code></td><td>Stall with probability p each access (100 / 25 / 1-in-4, like the APB gap modes)</td><td>General handshake robustness</td></tr>
+<tr><td><code>BURSTY</code></td><td>Quiet for N accesses, then a long stall</td><td>Restart-after-stall bugs</td></tr>
+<tr><td><code>TARGETED</code></td><td>Stall exactly on: a load in a branch word; a load whose offset LR is written in the same word (post-write forwarding); the last word before HALT; the first word after a taken branch</td><td>The corner cases the generated program really contains</td></tr>
+<tr><td><code>TAG_MISS_LIKE</code></td><td>One long stall of the length of a bank fill (hundreds of cycles). Mirrors the Cache Unit: CRM stalls the IPU until DMA publishes the bank tag</td><td>Long-stall tolerance, watchdog margin</td></tr>
+</table>
+<p>The "mini mind" is: <b>mode + short history window + seeded RNG</b>, re-picked every K accesses (a "phase") so one test visits several modes. The look-ahead comes from the reference model, which already knows what the next word is. Everything is seeded, so a failing stall pattern replays exactly.</p>
+<div class="warn"><b class="t">Spec gap (Q1)</b>The CTRL port list has <b>no stall / ready input</b>, and §9 of the spec says CTRL does no hazard interlocks. Until the stall signal into CTRL is defined, the XMEM agent can only monitor. Section 5 describes what the reference model must do once a stall exists (hold PC, hold buses, <code>xmem_read_en</code> low during bubbles).</div>
+
+<h2>4. Sequences and Items</h2>
+<h3>4.1 ctrl_word — one VLIW word</h3>
+<p>IMEM stores <b>already-decoded</b> words, so the item mirrors the slot layout. CTRL only demultiplexes it.</p>
+<table>
+<tr><th>Slot</th><th>Fields (randomised)</th><th>Constraints</th></tr>
+<tr><td>COND (×1)</td><td><code>op</code> ∈ {NOP, BEQ, BNE, BLT.S, BGE.S, BR, HALT}; <code>reg1, reg2</code> (LR/CR); <code>label</code> or <code>reg</code> (BR)</td><td>Branch target must be a legal word in the loaded program. <code>BR</code> uses the low 7 bits of the register. <code>HALT</code> only as a terminator.</td></tr>
+<tr><td>LR (×3 lanes)</td><td><code>SET, ADD, SUB, INC.MODP2, INC, DEC, ADDB, ADDBI</code>; <code>dest, src_a, src_b / imm / k</code></td><td>No two lanes write the same destination; <code>SET</code> imm is signed 4-bit; <code>INC.MODP2</code> k ∈ [1,9]; <code>ADDB/ADDBI</code> dest is an even <code>LRDn</code> pair.</td></tr>
+<tr><td>LOAD</td><td>NOP or <code>{base_idx (CR), offset_idx (LR)}</code></td><td>Resulting address must fit <code>XMEM_ADDR_W</code>.</td></tr>
+<tr><td>MULT / ACC / AAQ / STORE</td><td>Opaque slot payload + the CR/LR indices CTRL must resolve for that stage</td><td>CTRL does not decode the payload, only forwards it, so it is random. Indices are random over all 16 LR / 16 CR so every operand path is covered.</td></tr>
+</table>
+<div class="note"><b class="t">STORE slot</b>ADR 0007 removed the STORE slot, but the Control Stage page still describes <code>str_vliw_bus</code> (open question Q2). The plan keeps it as a parameter, <code>HAS_STORE_BUS</code>.</div>
+
+<h3>4.2 ctrl_cr_config and ctrl_program</h3>
+<ul>
+<li><code>ctrl_cr_config</code> — values for <code>CR2–CR14</code> (and <code>CR15</code>, the conventional DS half) of the inactive CR bank. <code>CR0 = 0</code> and <code>CR1 = 1</code> are hard-wired and never written, except by error injection.</li>
+<li><code>ctrl_program</code> — one whole kernel: <code>words[0..127]</code>, <code>cr_config</code>, and metadata: loop headers, guard registers, <code>BR</code> target sets, expected dynamic word count.</li>
+</ul>
+
+<h3>4.3 APB sequences</h3>
+<table>
+<tr><th>Sequence</th><th>Description</th></tr>
+<tr><td><code>apb_load_program_seq</code></td><td>Writes every word of a <code>ctrl_program</code> into the <b>inactive</b> IMEM bank, writes the CR config into the inactive CR bank, then writes the bank-swap registers.</td></tr>
+<tr><td><code>apb_status_seq</code></td><td>Reads status/bank-ID registers while the kernel runs (must add no wait cycles to the pipeline).</td></tr>
+<tr><td><code>apb_error_seq</code></td><td>Error injection: write <code>CR0</code> / <code>CR1</code>, write a read-only register, access an unmapped address — all expect <code>pslverr</code>.</td></tr>
+<tr><td><code>apb_preload_next_seq</code></td><td>Loads the <i>next</i> kernel into the new inactive bank while the current one runs.</td></tr>
+</table>
+
+<h3>4.4 ctrl_virtual_sequence — the program-driven test controller</h3>
+<p>This is the heart of the environment. It orchestrates the whole test in five phases, using a <b>termination-aware program generator</b>: the control-flow structure is generated first, proven to terminate, and only then filled with random instructions.</p>
+
+<h4>Why it is not just <code>randomize()</code></h4>
+<p>"Does this program terminate?" is a property of the control-flow graph (no unguarded cycle). A constraint solver cannot express it over a free-form array of words. So the sequence <b>constructs</b> the program stage by stage inside <code>body()</code>, and uses <code>randomize()</code> only for local choices (how many blocks, which edge, which opcode). The generation parameters are randomised once per test and distributed through config_db, as in the RX plan.</p>
+
+<h4>Test flow</h4>
+<table>
+<tr><th>Phase</th><th>Action</th></tr>
+<tr><td>0 — Configure</td><td>Randomise <code>ctrl_gen_parameters</code> and <code>stall_policy</code> once; publish via config_db.</td></tr>
+<tr><td>1 — Build program</td><td>Run the 7 generator stages below. Result: a validated <code>ctrl_program</code>.</td></tr>
+<tr><td>2 — Load</td><td><code>apb_load_program_seq</code>: program into the inactive IMEM bank, <code>CR2–CR14</code> into the inactive CR bank, then swap. The new active bank starts at PC 0 <i>(start mechanism: Q4)</i>.</td></tr>
+<tr><td>3 — Run</td><td>While the kernel executes: optionally preload the next kernel (<code>apb_preload_next_seq</code>), read status, inject APB errors. The XMEM agent applies its stall policy.</td></tr>
+<tr><td>4 — Finish</td><td>Wait for the predicted HALT retirement or the watchdog. Check scoreboards, sample coverage, drop objection.</td></tr>
+</table>
+<p><code>test_type</code>: <b>REGULAR</b> — one random kernel (fast). <b>REAL</b> — 10–100 kernels back-to-back, each preloaded into the inactive bank while the previous one runs, then swapped (long, high coverage value).</p>
+<p><code>program_kind</code>: <code>STRAIGHT_LINE</code>, <code>SINGLE_LOOP</code>, <code>NESTED_LOOPS</code>, <code>BRANCH_HEAVY</code> (branch in consecutive words), <code>INDIRECT_BR</code>, <code>LR_HAZARD</code> (same-word read-after-write), <code>LOAD_HEAVY</code>, <code>TIGHT_LOOP</code> (one-word loop), <code>BANK_EDGE</code> (program fills all 128 words, branches to word 0 and 127).</p>
+
+<h4>The seven generator stages</h4>
+<pre>build_cfg() -> analyze_loops() -> insert_guards() -> alloc_registers() -> fill_words() -> validate() -> emit()</pre>
+<table>
+<tr><th>#</th><th>Stage</th><th>What it does (CTRL specifics)</th></tr>
+<tr><td>1</td><td><b>build_cfg</b></td><td>Create ENTRY (PC 0) and END (the <code>HALT</code> word). Choose a random number of blocks so the total stays within <code>IMEM_BANK_DEPTH = 128</code> words. Lay a <b>spine</b> ENTRY→B0→…→Bn→END first (HALT is always reachable), then add random forward conditional branches, <b>backward edges</b> (loops) and <code>BR</code> nodes with a pre-chosen legal target set, e.g. <code>{B3, B8, B12}</code>, with an edge to each target.</td></tr>
+<tr><td>2</td><td><b>analyze_loops</b></td><td>SCC analysis (Tarjan) on the CFG. Every SCC with more than one node, or a self-loop, is a possible infinite run — this includes cycles created by <code>BR</code> edges. Record headers, members and nesting depth.</td></tr>
+<tr><td>3</td><td><b>insert_guards</b></td><td>Each SCC gets a guard counter in an LR: initialised in the pre-header with <code>SET LRg CRn</code> (budget in a host-populated CR) or <code>SET LRg #imm</code> (−8..7). Each iteration executes <code>DEC LRg 1</code> and a guard branch (<code>BNE LRg CR0 header</code> / <code>BEQ LRg CR0 exit</code>) on <b>every</b> cycle path. See the snapshot rule below.</td></tr>
+<tr><td>4</td><td><b>alloc_registers</b></td><td>Register manager (table below). Guards and <code>BR</code> target registers are chosen and protected <i>before</i> any random instruction is generated.</td></tr>
+<tr><td>5</td><td><b>fill_words</b></td><td>Fill each block with random LR ops, a LOAD, and random MULT/ACC/AAQ/STORE payloads, touching only <code>FREE</code> registers. The COND slot of the last word is <b>derived from the CFG edges</b>, never random. Hazard knobs deliberately make a lane write an LR that the same word's bus operand / load offset reads (post-write forwarding) and its branch reads (snapshot).</td></tr>
+<tr><td>6</td><td><b>validate</b></td><td>All branch/jump targets are legal words ≤ 127 and fit the label encoding; no protected register is written by random code; no two lanes in one word write the same register (including <code>LRD</code> pair aliasing); every cycle has a guard; HALT is reachable from every word; compute <code>max_dyn_words</code>. Failure is <code>uvm_fatal</code> — a <b>generator</b> bug, not a DUT bug.</td></tr>
+<tr><td>7</td><td><b>emit</b></td><td>Resolve labels to word addresses, fill the <code>BR</code> target CRs <i>after</i> layout (optionally with random junk in the upper bits to test that only the low 7 bits are used), encode to decoded VLIW words, and publish the program image + metadata to the APB load sequence, the reference model, the stall agent and coverage.</td></tr>
+</table>
+
+<h4>Register manager</h4>
+<table>
+<tr><th>State</th><th>Registers</th><th>Rule</th></tr>
+<tr><td><code>FREE</code></td><td>LR not used by the generator</td><td>Random instructions may read and write.</td></tr>
+<tr><td><code>LOOP_GUARD</code></td><td>One LR per live loop</td><td>Written only by the guard's <code>SET</code> / <code>DEC</code>.</td></tr>
+<tr><td><code>CONTROL_FLOW</code></td><td>LR holding a <code>BR</code> target</td><td>Read-only to random code. A CR target needs no protection (programs cannot write CR).</td></tr>
+<tr><td><code>RESERVED</code></td><td><code>CR0</code> (=0), <code>CR1</code> (=1), and any <code>LRD</code> pair that overlaps a protected LR</td><td>An <code>ADDB/ADDBI</code> on <code>LRDn</code> writes <code>LR(n)</code> and <code>LR(n+1)</code>, so both must be <code>FREE</code>.</td></tr>
+</table>
+
+<h4>The snapshot rule — worked loop example</h4>
+<p>An LR write in cycle N is <b>not</b> visible to CTRL's own branch read in cycle N. So a latch word <code>DEC LR5 1 ; BNE LR5 CR0 L</code> compares the value <i>before</i> the decrement:</p>
+<table>
+<tr><th>Iteration</th><th>LR5 read by BNE</th><th>Taken?</th><th>LR5 after DEC</th></tr>
+<tr><td>1</td><td>2</td><td>yes</td><td>1</td></tr>
+<tr><td>2</td><td>1</td><td>yes</td><td>0</td></tr>
+<tr><td>3</td><td>0</td><td>no — falls through</td><td>−1</td></tr>
+</table>
+<p>With budget <i>n</i> the body runs <i>n + 1</i> times. If the <code>DEC</code> is in an earlier word than the branch, it runs <i>n</i> times. The generator and the reference model must use the same rule; <code>validate</code> therefore also dry-runs the program on the reference model.</p>
+
+<h4>Termination and the watchdog bound</h4>
+<pre>max_dyn_words = sum over words( 1 x product(guard_budget + 1) of the enclosing loops )
+watchdog_cycles = max_dyn_words x (1 + max_stall_per_access) + margin</pre>
+<p>Keep <code>max_nest_depth</code> small (≈3): nested budgets multiply. A timeout is therefore either impossible (validate would have caught it) or a real DUT bug. <code>HALT</code> stops fetch, and the kernel is complete when the HALT word retires through the chain, so the end-of-kernel check is: reference model reaches HALT, no further bus changes or <code>xmem_read_en</code> after it.</p>
+
+<h3>4.5 Generation parameters</h3>
+<table>
+<tr><th>Parameter group</th><th>Controls</th></tr>
+<tr><td>Program kind weights</td><td>Relative probability of each <code>program_kind</code></td></tr>
+<tr><td>CFG shape</td><td>Blocks per program, loop probability, back-edge probability, <code>BR</code> fan-out, max nesting depth</td></tr>
+<tr><td>Guard budgets</td><td>Min/max loop budget; share held in CR vs. immediate</td></tr>
+<tr><td>LR-op mix</td><td>Weight per LR opcode; lanes active per word (0–3)</td></tr>
+<tr><td>Hazard knobs</td><td>Probability of same-word write→bus-operand, write→load-offset, write→branch-operand</td></tr>
+<tr><td>Valid / gap probability</td><td>APB idle-gap mode (back-to-back / sparse / deterministic)</td></tr>
+<tr><td>Stall policy</td><td>Mode weights, stall length ranges, phase length K</td></tr>
+<tr><td>Error injection</td><td>Probability per kernel of each APB error sequence</td></tr>
+<tr><td>Kernel count</td><td>Min/max kernels in a REAL test</td></tr>
+</table>
+
+<h2>5. Reference Model</h2>
+<p>A cycle-accurate model of CTRL (not transaction-level: the spec's behaviour is defined per cycle). It receives APB items from the APB monitor, so it tracks bank writes and swaps exactly like the DUT.</p>
+<h3>5.1 State</h3>
+<p><code>PC</code> (7 bits), active IMEM bank, active CR bank, <code>LR[16]</code> (32 bit), <code>CR[2][16]</code> with <code>CR0=0</code>, <code>CR1=1</code>, <code>halted</code>, <code>imem_rd_sel</code>.</p>
+<h3>5.2 Per-cycle behaviour</h3>
+<table>
+<tr><th>Step</th><th>Model action</th></tr>
+<tr><td>Fetch</td><td><code>inst_vliw = imem[active][PC]</code>. Non-branch next word = <code>PC+1</code>. On a branch, both <code>PC+1</code> and the target are candidates; <code>taken</code> selects. No bubble is ever inserted for a branch.</td></tr>
+<tr><td>Snapshot reads</td><td>Branch operands and LR-lane sources are read from the values committed at the end of the previous cycle.</td></tr>
+<tr><td>COND</td><td><code>BEQ / BNE / BLT.S / BGE.S</code> evaluate; <code>BR</code> is unconditional, target = low 7 bits of the register; <code>HALT</code> stops fetch (PC and word hold).</td></tr>
+<tr><td>LR lanes</td><td>Three lanes compute in parallel from the snapshot (32-bit wrap; <code>INC.MODP2</code> mask; <code>ADDB/ADDBI</code> per-byte saturate [0,255]) and commit at end of cycle.</td></tr>
+<tr><td>Forwarding</td><td>The four buses carry the <b>post-write</b> resolved operands. <code>xmem_read_addr = CR[base] + LR[offset]</code> from the post-write LR; <code>xmem_read_en = load != NOP</code>.</td></tr>
+<tr><td>APB</td><td>Register map, inactive-bank writes, swap effect on the next fetch cycle; <code>pslverr</code> on write to <code>CR0/CR1</code>, read-only registers, or unmapped addresses; the LR file is not writable over APB.</td></tr>
+<tr><td>Stall (Q1)</td><td>When defined: hold PC and word, hold buses, drive <code>xmem_read_en</code> low during the bubble.</td></tr>
+</table>
+<p>The model also emits per-word metadata (ops, branch taken, hazard flags, loop iteration) to the coverage subscriber and a look-ahead stream to the stall agent.</p>
+
+<h2>6. Scoreboards</h2>
+<h3>6.1 Comparison mechanism</h3>
+<p>Each scoreboard holds an expected queue (from the reference model) and an observed queue (from the monitor), compares per cycle, and reports the first mismatch with cycle, PC and word. Timing-only changes (stalls) must not change any compared value except the cycle alignment the reference model already accounts for.</p>
+<h3>6.2 Scoreboard instances</h3>
+<table>
+<tr><th>Scoreboard</th><th>Predicted vs observed</th></tr>
+<tr><td>Bus scoreboard</td><td>All four VLIW buses, each cycle: slot fields and resolved CR/LR operands (post-write values)</td></tr>
+<tr><td>XMEM scoreboard</td><td><code>xmem_read_en</code> and <code>xmem_read_addr</code> each cycle</td></tr>
+<tr><td>APB scoreboard</td><td><code>prdata</code>, <code>pready</code>, <code>pslverr</code> for every transfer</td></tr>
+</table>
+<h3>6.3 Assertions (SVA, bound to the DUT)</h3>
+<ul>
+<li>After a branch word, the next cycle's word is the one at <code>taken ? target : PC+1</code> (no bubble).</li>
+<li>After <code>HALT</code>, no new word is fetched until the next kernel starts.</li>
+<li><code>xmem_read_en</code> is high only when the load slot is non-NOP.</li>
+<li><code>CR0 == 0</code> and <code>CR1 == 1</code> always.</li>
+<li>No APB wait cycles caused by IPU activity (<code>pready</code> depends only on the slave write port).</li>
+</ul>
+
+<h2>7. Functional Coverage</h2>
+<h3>7.1 Word-level coverpoints</h3>
+<ul>
+<li>Each LR opcode × each lane (0, 1, 2); 0–3 lanes active in one word.</li>
+<li><code>SET</code> mode (CR vs. immediate; immediate −8, −1, 0, 7); <code>INC.MODP2</code> k ∈ 1..9; <code>ADDB/ADDBI</code> saturation at 0 and 255; 32-bit wrap in <code>ADD/SUB/INC/DEC</code>.</li>
+<li>Each COND op, taken and not taken; branch operands LR vs. CR; <code>BR</code> source LR vs. CR; <code>BR</code> with junk upper bits.</li>
+<li>Load: NOP vs. active; base CR index; offset LR index.</li>
+</ul>
+<h3>7.2 Scenario-level coverpoints</h3>
+<ul>
+<li>CFG shape: loop count, nesting depth, SCC size, one-word loop, <code>BR</code> fan-out, backward vs. forward branch.</li>
+<li>Branch in consecutive words; branch to <code>PC+1</code>; branch to itself; branch to word 0 and word 127; program length (1, 2, 64, 127, 128 words).</li>
+<li>Guard exit by guard vs. by data condition; <code>DEC</code> before vs. in the branch word.</li>
+<li>Back-to-back kernels; preload during run; swap immediately after HALT; APB traffic during execution.</li>
+<li>APB: each error type; gap mode; read during run.</li>
+</ul>
+<h3>7.3 Required cross coverage</h3>
+<ul>
+<li><b>Snapshot hazards:</b> LR written in word N × read by {lane source, branch operand, each bus operand, load offset} in the same word.</li>
+<li><b>Stall × event:</b> {each stall mode} × {load in branch word, load after LR write, last word before HALT, first word after taken branch, back-to-back loads}.</li>
+<li>COND op × taken × same-word LR write to a branch operand.</li>
+<li>Kernel kind × stall mode × APB gap mode.</li>
+</ul>
+
+<h2>8. Key Parameters</h2>
+<table>
+<tr><th>Parameter</th><th>Default</th><th>Note</th></tr>
+<tr><td><code>REG_WIDTH</code></td><td>32</td><td>CR/LR width (the spec's block diagram says 20 — Q3)</td></tr>
+<tr><td><code>IMEM_BANKS / IMEM_DEPTH / IMEM_BANK_DEPTH</code></td><td>2 / 256 / 128</td><td>PC width 7 bits</td></tr>
+<tr><td><code>IMEM_BANK_READ_PORTS</code></td><td>2</td><td>2R1W per bank: dual fetch on branch</td></tr>
+<tr><td><code>CR_BANKS / CR_REG_COUNT</code></td><td>2 / 16</td><td><code>CR0=0</code>, <code>CR1=1</code> hard-wired</td></tr>
+<tr><td><code>LR_REG_COUNT / LRD_REG_COUNT / LR_LANES</code></td><td>16 / 8 / 3</td><td>LRD = register-pair aliases</td></tr>
+<tr><td><code>COND_OP_COUNT / LR_OP_COUNT</code></td><td>6 / 8</td><td>COND: 5 branches + HALT</td></tr>
+<tr><td><code>APB_ADDR_W / APB_DATA_W</code></td><td>32 / 32</td><td></td></tr>
+<tr><td><code>XMEM_ADDR_W</code></td><td>impl</td><td>Truncation of CR+LR sum: Q5</td></tr>
+<tr><td><code>*_BUS_W</code></td><td>impl</td><td>Layout needed for scoreboard: Q6</td></tr>
+<tr><td><code>lock</code>-style test knobs</td><td>—</td><td><code>test_type, program_kind, num_kernels, max_nest_depth, max_loop_guard</code></td></tr>
+</table>
+
+<h2>9. Open Questions and Spec Issues</h2>
+<table>
+<tr><th>#</th><th>Issue</th><th>Impact on the plan</th></tr>
+<tr><td>Q1</td><td>CTRL has <b>no stall / ready input</b> and §9 says it does no interlocks, yet §7.1 mentions a "bubble". How does an XMEM stall reach CTRL? (The Cache Unit stalls the IPU on a tag miss.)</td><td>Defines the XMEM agent's output signal and the reference model's stall behaviour. <b>Highest priority.</b></td></tr>
+<tr><td>Q2</td><td>ADR 0007 removed the STORE slot; the Control Stage page still has <code>str_vliw_bus</code> (action A-4).</td><td>Plan keeps <code>HAS_STORE_BUS</code> as a parameter.</td></tr>
+<tr><td>Q3</td><td>Block diagram says CR/LR are 20-bit; the parameters and text say 32-bit.</td><td>Plan uses 32.</td></tr>
+<tr><td>Q4</td><td>How a kernel starts and how completion is signalled is not on the port list (<code>kernel_done</code> is mentioned in prose; the bank-swap is described as both an APB register and an external <code>imem_bank_sel</code>).</td><td>Start = swap register write (assumed). End = reference model HALT + monitors, until a status register is defined.</td></tr>
+<tr><td>Q5</td><td><code>XMEM_ADDR_W</code> vs. the 32-bit <code>CR + LR</code> sum: truncate or error?</td><td>Reference model address width.</td></tr>
+<tr><td>Q6</td><td>Bus layouts (<code>*_BUS_W</code>), APB address map and the IMEM word width (decoded VLIW is wider than 32 bits, so multiple APB writes per word?) are not defined.</td><td>Needed for <code>bus_layout</code> and <code>apb_load_program_seq</code>.</td></tr>
+<tr><td>Q7</td><td>Spec text says "11 mnemonics" and "seven branches"; the tables list 8 LR ops and 6 COND ops (5 branches + HALT). §10.1 refers to "see §10" for the same-destination rule.</td><td>Plan follows the tables.</td></tr>
+<tr><td>Q8</td><td>The Cache Unit spec is attached but out of scope. It is used only to model realistic stall lengths (<code>TAG_MISS_LIKE</code>).</td><td>None.</td></tr>
+</table>
+
+<h2>10. Milestones</h2>
+<ul>
+<li><b>M1</b> — APB agent with clock plumbing, directed program load, reference model for non-branch words, bus scoreboard.</li>
+<li><b>M2</b> — Generator stages 1–3 and 6–7 (spine + guarded loops, LR ops only), branch model, no-bubble assertions.</li>
+<li><b>M3</b> — Register manager, loads, <code>BR</code> indirect jumps, <code>LRD</code> pairs, hazard knobs, APB error injection.</li>
+<li><b>M4</b> — XMEM stall agent policies (after Q1 is closed), REAL test (back-to-back kernels).</li>
+<li><b>M5</b> — Coverage closure and seed regression.</li>
+</ul>
+</body></html>

@@ -1,0 +1,24 @@
+@page { size: A4; margin: 18mm 17mm 18mm 17mm; }
+body{font-family:Arial,"Liberation Sans",Helvetica,sans-serif;font-size:9.6pt;line-height:1.38;color:#222;margin:0}
+.cover{height:190mm;text-align:center;padding-top:62mm;page-break-after:always}
+.cover h1{color:#1f4e8c;font-size:26pt;margin:0 0 14px}
+.cover .s1{font-size:12pt;color:#444;margin:6px 0}.cover .s2{font-size:9.5pt;color:#555}
+h2{background:#1f4e8c;color:#fff;font-size:12.5pt;padding:3px 8px;margin:20px 0 8px;page-break-after:avoid}
+h3{color:#1f4e8c;font-size:11pt;border-bottom:1px solid #1f4e8c;padding-bottom:2px;margin:14px 0 6px;page-break-after:avoid}
+h4{color:#2e75b6;font-size:9.8pt;margin:10px 0 3px;page-break-after:avoid}
+p{margin:4px 0 6px}ul{margin:3px 0 7px;padding-left:20px}li{margin:1px 0}
+table{border-collapse:collapse;width:100%;margin:6px 0 10px;page-break-inside:auto}
+tr{page-break-inside:avoid}
+th{background:#1f4e8c;color:#fff;text-align:left;padding:3px 6px;font-size:9pt;border:1px solid #1f4e8c}
+td{border:1px solid #9aa7b8;padding:3px 6px;font-size:9pt;vertical-align:top}
+tr:nth-child(even) td{background:#f5f8fc}
+code,pre{font-family:"DejaVu Sans Mono","Liberation Mono",monospace;font-size:8.2pt}
+code{background:#eef1f5;padding:0 2px;border-radius:2px}
+pre{background:#f4f6f9;border:1px solid #d5dbe4;border-radius:3px;padding:6px 8px;white-space:pre-wrap;page-break-inside:avoid;line-height:1.3}
+.note{background:#c9efe3;border:1px solid #2e9e7c;padding:5px 8px;margin:8px 0;font-size:9pt;page-break-inside:avoid}
+.note b.t{color:#0f6b50;display:block;margin-bottom:2px}
+.warn{background:#fff1cf;border:1px solid #d08a00;padding:5px 8px;margin:8px 0;font-size:9pt;page-break-inside:avoid}
+.warn b.t{color:#8a5a00;display:block;margin-bottom:2px}
+.diagram{page-break-inside:avoid;margin:6px 0}
+.diagram svg{width:100%;height:auto}
+.small{font-size:8.5pt;color:#555}
