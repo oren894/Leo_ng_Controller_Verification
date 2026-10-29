@@ -41,8 +41,8 @@ o.append(group(618, 8, 150, 330, "Output / slave agents", "#e0805f"))
 
 # stimulus
 o.append(box(22, 34, 164, 52, "Virtual sequence", ["program kind · test type · num kernels", "builds + loads + runs"], *PURPLE))
-o.append(box(22, 98, 164, 66, "Program builder", ["CFG · SCC · loop guards", "register manager · fill words", "validate · encode"], *PURPLE))
-o.append(box(22, 176, 164, 54, "ctrl_program item", ["VLIW words[ ] · CR init[ ]", "metadata (loops, BR targets)"], *BROWN))
+o.append(box(22, 98, 164, 66, "Program generator", ["run-while-generate", "state tracker (PC, LR, COND)", "undo on loop / early HALT"], *PURPLE))
+o.append(box(22, 176, 164, 54, "ctrl_program item", ["VLIW words[ ] · CR init[ ]", "known dynamic length, loops"], *BROWN))
 o.append(box(22, 242, 164, 80, "Generation parameters", ["block / loop / branch weights", "LR-op mix · hazard knobs", "APB gap prob. · fill policy", "error-injection probs"], *BROWN))
 
 # APB agent
@@ -69,7 +69,7 @@ o.append(box(790, 176, 114, 82, "Coverage subscriber", ["per-word metadata", "fr
 
 # reference model
 o.append(box(424, 450, 336, 100, "Reference model (cycle-accurate CTRL ISS)", ["state: PC . active IMEM/CR bank . LR[16] . CR[2][16] . halted", "per cycle: fetch . read snapshot . COND . 3 LR lanes . pack buses", "snapshot for own reads, post-write values for buses + xmem addr", "APB map: banks, swap, pslverr on CR0/CR1 / unmapped"], *BLUE))
-o.append(box(22, 450, 190, 100, "Watchdog + SVA", ["computed cycle bound", "no-bubble-on-branch", "HALT -> fetch stops", "xmem_read_en only on load"], *BROWN))
+o.append(box(22, 450, 190, 100, "Watchdog + SVA", ["exact length from generator", "no-bubble-on-branch", "HALT -> fetch stops", "xmem_read_en only on load"], *BROWN))
 o.append(box(228, 450, 176, 100, "TB top", ["clk / rst generator", "single clock owner", "vif -> APB agent,", "bus agent, XMEM agent"], *DUT))
 
 o.append(box(424, 354, 176, 70, "Probe agent (monitor-only)", ["bind / hier. probes inside DUT", "PC . word . branch . LR writes", "LR/CR files . bank ids -> probe_item"], *RED))
@@ -95,7 +95,6 @@ o.append(poly([(776,130),(790,130)], "#2f6fb5"))
 o.append(poly([(760,530),(772,530),(772,217),(790,217)], "#b83a6a"))
 o.append(poly([(632,314),(616,314),(616,450)], "#6b5bd2", "5,4"))  # cache unit agent -> RM
 # program item -> RM / stall agent (metadata)
-o.append(poly([(22,203),(14,203),(14,362),(416,362)], "#6b5bd2", "5,4", head=False))
 # legend
 o.append('<rect x="8" y="566" width="904" height="98" rx="6" fill="#fff" stroke="#ccc"/>')
 o.append('<text x="22" y="586" font-weight="bold" font-size="10" fill="#333">Legend</text>')
@@ -103,7 +102,7 @@ leg=[("#eeeefb","#6b5bd2","Sequences"),("#e1f3ec","#2e9e7c","Input agent"),("#f1
 for i,(f,s,t) in enumerate(leg):
     x=80+i*104
     o.append(f'<rect x="{x}" y="576" width="14" height="12" rx="3" fill="{f}" stroke="{s}"/><text x="{x+20}" y="586" font-size="8.5" fill="#444">{t}</text>')
-ll=[("#2e9e7c",None,"Stimulus / APB flow"),("#c4573a",None,"DUT -> output agents"),("#5a9a2a",None,"Agent -> scoreboard"),("#2f6fb5",None,"RM -> scoreboard"),("#6b5bd2","5,4","Streams to RM: APB, program, cache events"),("#d08a00","4,3","Cache Unit stall (signal TBD)"),("#b83a6a",None,"Coverage metadata")]
+ll=[("#2e9e7c",None,"Stimulus / APB flow"),("#c4573a",None,"DUT -> output agents"),("#5a9a2a",None,"Agent -> scoreboard"),("#2f6fb5",None,"RM -> scoreboard"),("#6b5bd2","5,4","Streams to RM: APB monitor, cache events"),("#d08a00","4,3","Cache Unit stall (signal TBD)"),("#b83a6a",None,"Coverage metadata")]
 for i,(c,d,t) in enumerate(ll):
     x=22+(i%4)*224; y=612+(i//4)*22
     dd=f' stroke-dasharray="{d}"' if d else ''

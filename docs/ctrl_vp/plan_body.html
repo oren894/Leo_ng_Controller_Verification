@@ -9,7 +9,7 @@
 <p>This plan covers <b>CTRL only</b>. The downstream stages (MULT, ACC, AAQ, STORE) and XMEM data return are not in the environment: their buses and the XMEM address port are <i>monitored</i>, not consumed.</p>
 <h3>1.1 What makes CTRL hard to verify</h3>
 <ul>
-<li><b>Programs are the stimulus.</b> The DUT's behaviour is defined by the VLIW program in its IMEM. Random <i>legal and terminating</i> programs are the main source of coverage (§4).</li>
+<li><b>Programs are the stimulus.</b> The DUT's behaviour is defined by the VLIW program in its IMEM. Random programs that are <i>legal and known to stop</i> are the main source of coverage (§4).</li>
 <li><b>Two read semantics in one cycle.</b> CTRL's own reads (LR-ALU sources, branch operands) use the <i>prior-cycle snapshot</i>; the values forwarded on the buses and used for <code>xmem_read_addr</code> are the <i>post-LR-write</i> values.</li>
 <li><b>No-bubble branches.</b> Both <code>PC+1</code> and the branch target are fetched in parallel; the correct word must always be present next cycle.</li>
 <li><b>Double-buffered configuration.</b> The host writes the inactive IMEM/CR bank over APB while the active bank executes.</li>
@@ -19,10 +19,10 @@
 <h2>2. Environment Architecture</h2>
 <div class="diagram">__SVG__</div>
 <ul>
-<li>The <b>virtual sequence</b> builds a random terminating program, loads it through the APB agent into the inactive bank, swaps, and lets it run. It is the only place that knows the whole program.</li>
+<li>The <b>virtual sequence</b> generates a random program that is known to stop (§4.4), loads it through the APB agent into the inactive bank, swaps, and lets it run. It is the only place that knows the whole program.</li>
 <li>The <b>Cache Unit agent</b> sends stall events, bank-tag changes and table configuration to the reference model, so predicted timing includes the stalls the DUT really saw.</li>
 <li>The <b>probe agent</b> samples CTRL's internal signals every cycle; the <b>probe scoreboard</b> compares them with the reference model's internal state.</li>
-<li>The <b>reference model</b> is a cycle-accurate model of CTRL. It sees the same APB traffic (via the APB monitor) and the same program image, and predicts the four buses and the XMEM address for every cycle.</li>
+<li>The <b>reference model</b> is a cycle-accurate model of CTRL. It learns the program <b>only</b> from the APB monitor (what the DUT actually received), never from the generator, and predicts the four buses and the XMEM address for every cycle.</li>
 <li>Each <b>scoreboard</b> receives predicted items from the reference model and observed items from the relevant monitor, and compares them.</li>
 <li>The <b>coverage subscriber</b> receives per-word metadata from the reference model and samples the functional covergroups.</li>
 <li>The Cache Unit agent models the stall source from XMEM tag state. The clock and reset are owned by the TB top. The APB agent only <i>receives</i> <code>clk</code> through its virtual interface.</li>
@@ -110,7 +110,7 @@
 <p>The model uses these to hold PC, word and buses during a stall. In the other direction, the model gives the agent a look-ahead of upcoming load addresses (used by <code>TARGETED</code>).</p>
 <h4>Two consequences for the program generator</h4>
 <ul>
-<li><b>Load addresses must be legal for the table.</b> A load must stay inside the table <code>size</code>, walk banks in order, and may revisit a freed bank only on a new repetition. A load to a freed bank that DMA will never refill would hang the DUT forever, so that is a <b>generator bug</b>, not a DUT bug. <code>validate</code> checks the planned address sequence (§4.4, stage 6).</li>
+<li><b>Load addresses must be legal for the table.</b> A load must stay inside the table <code>size</code>, walk banks in order, and may revisit a freed bank only on a new repetition. A load to a freed bank that DMA will never refill would hang the DUT forever, so that is a <b>generator bug</b>, not a DUT bug. The generator's state tracker knows every load address exactly (<code>CR + LR</code>), so it rejects a word whose address would be illegal (§4.4).</li>
 <li><b>The watchdog must include fill latency</b> (§4.4).</li>
 </ul>
 <div class="warn"><b class="t">Open points on the stall path (Q1)</b>The stall <i>source</i> is now clear (Cache Unit / CRM). Still undefined in the CTRL spec: (a) the CTRL port list has no stall / ready input, so it is unknown how the stall reaches the controller (held <code>xmem_read_en</code>, a <code>stall</code> wire, …); (b) CTRL only outputs <code>xmem_read_addr</code>, while the CRM needs <code>table_id</code> plus <code>array_id + offset</code> — where does <code>table_id</code> come from? Until then the agent drives a placeholder <code>stall</code> signal.</div>
@@ -130,7 +130,7 @@
 <h3>4.2 ctrl_cr_config and ctrl_program</h3>
 <ul>
 <li><code>ctrl_cr_config</code> — values for <code>CR2–CR14</code> (and <code>CR15</code>, the conventional DS half) of the inactive CR bank. <code>CR0 = 0</code> and <code>CR1 = 1</code> are hard-wired and never written, except by error injection.</li>
-<li><code>ctrl_program</code> — one whole kernel: <code>words[0..127]</code>, <code>cr_config</code>, and metadata: loop headers, guard registers, <code>BR</code> target sets, expected dynamic word count.</li>
+<li><code>ctrl_program</code> — one whole kernel: <code>words[0..127]</code>, <code>cr_config</code>, and what the generator learned while building it (used for coverage, the watchdog and the Cache Unit table config): exact dynamic word count, loops seen, taken branches, <code>BR</code> targets, load addresses.</li>
 </ul>
 
 <h3>4.3 APB sequences</h3>
@@ -143,66 +143,68 @@
 </table>
 
 <h3>4.4 ctrl_virtual_sequence — the program-driven test controller</h3>
-<p>This is the heart of the environment. It orchestrates the whole test in five phases, using a <b>termination-aware program generator</b>: the control-flow structure is generated first, proven to terminate, and only then filled with random instructions.</p>
+<p>This is the heart of the environment. The program is the stimulus, and it has only <b>two limits: it must be legal and it must stop.</b> Inside those limits it is fully random: any LR op, any COND op (including <code>BR</code> whose target comes from an LR), any label, loops entered from anywhere. There is no AST, no control-flow graph and no loop-guard rule. The reference model is not involved in deciding that a program stops.</p>
 
-<h4>Why it is not just <code>randomize()</code></h4>
-<p>"Does this program terminate?" is a property of the control-flow graph (no unguarded cycle). A constraint solver cannot express it over a free-form array of words. So the sequence <b>constructs</b> the program stage by stage inside <code>body()</code>, and uses <code>randomize()</code> only for local choices (how many blocks, which edge, which opcode). The generation parameters are randomised once per test and distributed through config_db, as in the RX plan.</p>
+<h4>Why the generator must follow the values</h4>
+<p>Whether a branch goes to <code>PC+1</code> or to its label depends on LR values, and a <code>BR</code> goes wherever an LR points. For an <b>unrestricted</b> program, the only way to <i>know</i> that it ends is to follow those values while the program is built. (If the generator may not follow values, the program must be restricted instead — forward branches and guarded loops — and then it can no longer contain arbitrary loops or computed jumps.) CTRL's control flow depends only on <code>PC</code>, <code>LR[16]</code> and the fixed CR values, never on XMEM data, stalls or APB timing, so following those values gives an exact answer.</p>
+
+<h4>Execution-guided generation</h4>
+<p>The generator contains its own small <b>state tracker</b> (<code>ctrl_prog_tracker</code>: <code>PC</code>, <code>LR[16]</code>, the 3 LR lanes, the COND evaluator, the snapshot rule). It is a separate class from the reference model and is built only from the ISA text.</p>
+<table>
+<tr><th>Step</th><th>What happens</th></tr>
+<tr><td>1 — Start</td><td>Pick a requested length <i>T</i> (executed words) and the CR values. <code>PC = 0</code>, LR in its starting state. Word 127 is <code>HALT</code>.</td></tr>
+<tr><td>2 — New word</td><td>When execution reaches a word that does not exist yet, create it <b>fully at random</b> but legal (see below), then execute it in the tracker. Existing words are executed as they are.</td></tr>
+<tr><td>3 — Finish</td><td>When <i>T</i> words have executed, the next new word is forced to a jump to word 127 (e.g. <code>BEQ r r</code> to <code>HALT</code>). A stopping continuation therefore always exists.</td></tr>
+<tr><td>4 — Failure</td><td>Fail if the state <code>(PC, LR[0..15])</code> repeats (provably infinite), if the path exceeds a step limit, if execution reaches <code>HALT</code> before <i>T</i>, or if a load address is illegal for the table (§3.4).</td></tr>
+<tr><td>5 — Undo</td><td>On failure, go back to the most recent new word, forget it and everything after it, and re-roll that word. After a few tries on one word, go back to the one before.</td></tr>
+<tr><td>6 — Fill</td><td>Words that were never reached are dead code. Fill them with random legal words or <code>HALT</code>; they cannot change behaviour.</td></tr>
+</table>
+<p>The result is a program whose executed path is known exactly: its dynamic length, its loops, every taken branch and every <code>BR</code> target. Words are created only when execution needs them, which is why loops and jumps to earlier code appear naturally: a loop is a set of existing words executed again with new LR values, and the tracker watches it until it exits.</p>
+
+<h4>Legality rules (the only restrictions on a word)</h4>
+<ul>
+<li>No two LR lanes in one word write the same register, counting <code>LRD</code> pair aliasing.</li>
+<li><code>ADDB/ADDBI</code> destination is an even <code>LRDn</code>; <code>SET</code> immediate is signed 4-bit; <code>INC.MODP2</code> <i>k</i> ∈ [1, 9].</li>
+<li>Labels and <code>BR</code> targets are word addresses 0–127 (low 7 bits).</li>
+<li>CR0 and CR1 are never written.</li>
+<li>Load addresses (<code>CR[base] + LR[offset]</code>, post-write) stay inside the table the Cache Unit agent knows (§3.4), every time the word runs.</li>
+</ul>
+
+<h4>Measured on a prototype</h4>
+<p>A C model of the ISA, 2000 programs per run, each with a requested length <i>T</i> chosen at random:</p>
+<table>
+<tr><th>Requested length T</th><th>Programs generated</th><th>Avg executed words</th><th>With a loop</th></tr>
+<tr><td>20 – 500</td><td>1999 / 2000 (99.95%)</td><td>346</td><td>96%</td></tr>
+<tr><td>20 – 5,000</td><td>1719 / 2000 (86%)</td><td>872</td><td>98%</td></tr>
+<tr><td>500 – 5,000 (more retries)</td><td>1295 / 2000 (65%)</td><td>1,949</td><td>100%</td></tr>
+</table>
+<p>Every finished program was run again from scratch and halted at exactly the predicted step count (0 mismatches in 5,000 programs). A failure means the generator gave up after its work budget; long loop-heavy programs need hundreds of undo steps. For comparison, generating random words and then checking accepted 39% of programs but they averaged 17 executed words.</p>
 
 <h4>Test flow</h4>
 <table>
 <tr><th>Phase</th><th>Action</th></tr>
 <tr><td>0 — Configure</td><td>Randomise <code>ctrl_gen_parameters</code> and the Cache Unit policy (fill modes, latencies, table configs) once; publish via config_db.</td></tr>
-<tr><td>1 — Build program</td><td>Run the 7 generator stages below. Result: a validated <code>ctrl_program</code>.</td></tr>
-<tr><td>2 — Load</td><td><code>apb_load_program_seq</code>: program into the inactive IMEM bank, <code>CR2–CR14</code> into the inactive CR bank, then swap. The new active bank starts at PC 0 <i>(start mechanism: Q4)</i>.</td></tr>
+<tr><td>1 — Generate</td><td>Run execution-guided generation. The result is a program <b>known to stop</b>, with its exact dynamic length. Nothing has been sent to the DUT or the reference model yet.</td></tr>
+<tr><td>2 — Load</td><td><code>apb_load_program_seq</code>: program into the inactive IMEM bank, <code>CR2–CR14</code> into the inactive CR bank, then swap. The new active bank starts at PC 0 <i>(start mechanism: Q4)</i>. The reference model learns the program from the APB monitor.</td></tr>
 <tr><td>3 — Run</td><td>While the kernel executes: optionally preload the next kernel (<code>apb_preload_next_seq</code>), read status, inject APB errors. The Cache Unit agent stalls the controller whenever a requested bank is not ready.</td></tr>
-<tr><td>4 — Finish</td><td>Wait for the predicted HALT retirement or the watchdog. Check scoreboards, sample coverage, drop objection.</td></tr>
+<tr><td>4 — Finish</td><td>Wait for <code>HALT</code> to retire; the watchdog uses the <b>exact</b> dynamic length from phase 1 plus Cache Unit fill latency. A timeout is a DUT bug or a mismatch between the tracker and the DUT. Check scoreboards, sample coverage, drop objection.</td></tr>
 </table>
-<p><code>test_type</code>: <b>REGULAR</b> — one random kernel (fast). <b>REAL</b> — 10–100 kernels back-to-back, each preloaded into the inactive bank while the previous one runs, then swapped (long, high coverage value).</p>
-<p><code>program_kind</code>: <code>STRAIGHT_LINE</code>, <code>SINGLE_LOOP</code>, <code>NESTED_LOOPS</code>, <code>BRANCH_HEAVY</code> (branch in consecutive words), <code>INDIRECT_BR</code>, <code>LR_HAZARD</code> (same-word read-after-write), <code>LOAD_HEAVY</code> (many banks, tag miss at each boundary), <code>TIGHT_LOOP</code> (one-word loop), <code>BANK_EDGE</code> (program fills all 128 words, branches to word 0 and 127).</p>
+<p><code>test_type</code>: <b>REGULAR</b> — one program (fast). <b>REAL</b> — 10–100 kernels back-to-back, each preloaded into the inactive bank while the previous one runs, then swapped.</p>
+<p><code>program_mode</code>: <code>FREE</code> (fully random), <code>LONG</code> / <code>SHORT</code> (requested length <i>T</i>), <code>PINNED</code> (some words fixed by a directed test, the rest random and still known to stop), <code>BANK_FULL</code> (uses all 128 words).</p>
 
-<h4>The seven generator stages</h4>
-<pre>build_cfg() -> analyze_loops() -> insert_guards() -> alloc_registers() -> fill_words() -> validate() -> emit()</pre>
-<table>
-<tr><th>#</th><th>Stage</th><th>What it does (CTRL specifics)</th></tr>
-<tr><td>1</td><td><b>build_cfg</b></td><td>Create ENTRY (PC 0) and END (the <code>HALT</code> word). Choose a random number of blocks so the total stays within <code>IMEM_BANK_DEPTH = 128</code> words. Lay a <b>spine</b> ENTRY→B0→…→Bn→END first (HALT is always reachable), then add random forward conditional branches, <b>backward edges</b> (loops) and <code>BR</code> nodes with a pre-chosen legal target set, e.g. <code>{B3, B8, B12}</code>, with an edge to each target.</td></tr>
-<tr><td>2</td><td><b>analyze_loops</b></td><td>SCC analysis (Tarjan) on the CFG. Every SCC with more than one node, or a self-loop, is a possible infinite run — this includes cycles created by <code>BR</code> edges. Record headers, members and nesting depth.</td></tr>
-<tr><td>3</td><td><b>insert_guards</b></td><td>Each SCC gets a guard counter in an LR: initialised in the pre-header with <code>SET LRg CRn</code> (budget in a host-populated CR) or <code>SET LRg #imm</code> (−8..7). Each iteration executes <code>DEC LRg 1</code> and a guard branch (<code>BNE LRg CR0 header</code> / <code>BEQ LRg CR0 exit</code>) on <b>every</b> cycle path. See the snapshot rule below.</td></tr>
-<tr><td>4</td><td><b>alloc_registers</b></td><td>Register manager (table below). Guards and <code>BR</code> target registers are chosen and protected <i>before</i> any random instruction is generated.</td></tr>
-<tr><td>5</td><td><b>fill_words</b></td><td>Fill each block with random LR ops, a LOAD, and random MULT/ACC/AAQ/STORE payloads, touching only <code>FREE</code> registers. The COND slot of the last word is <b>derived from the CFG edges</b>, never random. Hazard knobs deliberately make a lane write an LR that the same word's bus operand / load offset reads (post-write forwarding) and its branch reads (snapshot).</td></tr>
-<tr><td>6</td><td><b>validate</b></td><td>All branch/jump targets are legal words ≤ 127 and fit the label encoding; no protected register is written by random code; no two lanes in one word write the same register (including <code>LRD</code> pair aliasing); every cycle has a guard; <b>every planned load address is legal for the table</b> (inside <code>size</code>, banks walked in order, revisit only on a new repetition); HALT is reachable from every word; compute <code>max_dyn_words</code>. Failure is <code>uvm_fatal</code> — a <b>generator</b> bug, not a DUT bug.</td></tr>
-<tr><td>7</td><td><b>emit</b></td><td>Resolve labels to word addresses, fill the <code>BR</code> target CRs <i>after</i> layout (optionally with random junk in the upper bits to test that only the low 7 bits are used), encode to decoded VLIW words, and publish the program image + metadata (including the load-address plan and table configs) to the APB load sequence, the reference model, the Cache Unit agent and coverage.</td></tr>
-</table>
-
-<h4>Register manager</h4>
-<table>
-<tr><th>State</th><th>Registers</th><th>Rule</th></tr>
-<tr><td><code>FREE</code></td><td>LR not used by the generator</td><td>Random instructions may read and write.</td></tr>
-<tr><td><code>LOOP_GUARD</code></td><td>One LR per live loop</td><td>Written only by the guard's <code>SET</code> / <code>DEC</code>.</td></tr>
-<tr><td><code>CONTROL_FLOW</code></td><td>LR holding a <code>BR</code> target</td><td>Read-only to random code. A CR target needs no protection (programs cannot write CR).</td></tr>
-<tr><td><code>RESERVED</code></td><td><code>CR0</code> (=0), <code>CR1</code> (=1), and any <code>LRD</code> pair that overlaps a protected LR</td><td>An <code>ADDB/ADDBI</code> on <code>LRDn</code> writes <code>LR(n)</code> and <code>LR(n+1)</code>, so both must be <code>FREE</code>.</td></tr>
-</table>
-
-<h4>The snapshot rule — worked loop example</h4>
-<p>An LR write in cycle N is <b>not</b> visible to CTRL's own branch read in cycle N. So a latch word <code>DEC LR5 1 ; BNE LR5 CR0 L</code> compares the value <i>before</i> the decrement:</p>
-<table>
-<tr><th>Iteration</th><th>LR5 read by BNE</th><th>Taken?</th><th>LR5 after DEC</th></tr>
-<tr><td>1</td><td>2</td><td>yes</td><td>1</td></tr>
-<tr><td>2</td><td>1</td><td>yes</td><td>0</td></tr>
-<tr><td>3</td><td>0</td><td>no — falls through</td><td>−1</td></tr>
-</table>
-<p>With budget <i>n</i> the body runs <i>n + 1</i> times. If the <code>DEC</code> is in an earlier word than the branch, it runs <i>n</i> times. The generator and the reference model must use the same rule; <code>validate</code> therefore also dry-runs the program on the reference model.</p>
-
-<h4>Termination and the watchdog bound</h4>
-<pre>max_dyn_words = sum over words( 1 x product(guard_budget + 1) of the enclosing loops )
-watchdog_cycles = max_dyn_words + (number_of_bank_fills x max_fill_latency) + margin</pre>
-<p>Keep <code>max_nest_depth</code> small (≈3): nested budgets multiply. A timeout is therefore either impossible (validate would have caught it) or a real DUT bug. <code>HALT</code> stops fetch, and the kernel is complete when the HALT word retires through the chain, so the end-of-kernel check is: reference model reaches HALT, no further bus changes or <code>xmem_read_en</code> after it.</p>
+<h4>Starting state and the tracker</h4>
+<ul>
+<li>The check is exact for one starting LR state. Whether the LRs are cleared at kernel start is not in the spec (Q10). In a back-to-back test the generator must use the LR values left by the previous kernel, or zeros if the DUT clears them.</li>
+<li>The tracker is a second copy of the instruction semantics. If it differs from the DUT, a generated program might not stop in the DUT. Check it once, offline, against the reference model on a few thousand programs. During tests the two are not coupled.</li>
+</ul>
 
 <h3>4.5 Generation parameters</h3>
 <table>
 <tr><th>Parameter group</th><th>Controls</th></tr>
 <tr><td>Program kind weights</td><td>Relative probability of each <code>program_kind</code></td></tr>
-<tr><td>CFG shape</td><td>Blocks per program, loop probability, back-edge probability, <code>BR</code> fan-out, max nesting depth</td></tr>
-<tr><td>Guard budgets</td><td>Min/max loop budget; share held in CR vs. immediate</td></tr>
+<tr><td>Requested length</td><td>Range of <i>T</i> (executed words), program mode weights</td></tr>
+<tr><td>Generator effort</td><td>Retries per word, work budget, step limit per attempt</td></tr>
+<tr><td>COND mix</td><td>Weights of NOP / BEQ / BNE / BLT.S / BGE.S / BR; label distribution</td></tr>
 <tr><td>LR-op mix</td><td>Weight per LR opcode; lanes active per word (0–3)</td></tr>
 <tr><td>Hazard knobs</td><td>Probability of same-word write→bus-operand, write→load-offset, write→branch-operand</td></tr>
 <tr><td>Valid / gap probability</td><td>APB idle-gap mode (back-to-back / sparse / deterministic)</td></tr>
@@ -257,7 +259,7 @@ watchdog_cycles = max_dyn_words + (number_of_bank_fills x max_fill_latency) + ma
 </ul>
 <h3>7.2 Scenario-level coverpoints</h3>
 <ul>
-<li>CFG shape: loop count, nesting depth, SCC size, one-word loop, <code>BR</code> fan-out, backward vs. forward branch.</li>
+<li>Trace shape (seen at run time): loop count, nesting, one-word loop, <code>BR</code> target distance, backward vs. forward branch, loop iteration counts.</li>
 <li>Branch in consecutive words; branch to <code>PC+1</code>; branch to itself; branch to word 0 and word 127; program length (1, 2, 64, 127, 128 words).</li>
 <li>Guard exit by guard vs. by data condition; <code>DEC</code> before vs. in the branch word.</li>
 <li>Back-to-back kernels; preload during run; swap immediately after HALT; APB traffic during execution.</li>
@@ -285,7 +287,7 @@ watchdog_cycles = max_dyn_words + (number_of_bank_fills x max_fill_latency) + ma
 <tr><td><code>NUM_BANKS / rows per bank / META_DATA_WIDTH</code></td><td>16 / 1024 / 16</td><td>Cache Unit; tag = {table_id, offset[19:10]}</td></tr>
 <tr><td><code>XMEM_ADDR_W</code></td><td>impl</td><td>Truncation of CR+LR sum: Q5</td></tr>
 <tr><td><code>*_BUS_W</code></td><td>impl</td><td>Layout needed for scoreboard: Q6</td></tr>
-<tr><td><code>lock</code>-style test knobs</td><td>—</td><td><code>test_type, program_kind, num_kernels, max_nest_depth, max_loop_guard</code></td></tr>
+<tr><td><code>lock</code>-style test knobs</td><td>—</td><td><code>test_type, program_mode, num_kernels, requested length T</code></td></tr>
 </table>
 
 <h2>9. Open Questions and Spec Issues</h2>
@@ -299,14 +301,15 @@ watchdog_cycles = max_dyn_words + (number_of_bank_fills x max_fill_latency) + ma
 <tr><td>Q6</td><td>Bus layouts (<code>*_BUS_W</code>), APB address map and the IMEM word width (decoded VLIW is wider than 32 bits, so multiple APB writes per word?) are not defined.</td><td>Needed for <code>bus_layout</code> and <code>apb_load_program_seq</code>.</td></tr>
 <tr><td>Q7</td><td>Spec text says "11 mnemonics" and "seven branches"; the tables list 8 LR ops and 6 COND ops (5 branches + HALT). §10.1 refers to "see §10" for the same-destination rule.</td><td>Plan follows the tables.</td></tr>
 <tr><td>Q9</td><td>The RTL hierarchy and names of the internal signals are not known. The spec lists them only in a note (§3) and says they do not cross the stage boundary; <code>CR/LR</code> file storage layout and the bank-select registers are also not described.</td><td>Needed for the single <code>ctrl_probe_if</code> mapping file.</td></tr>
+<tr><td>Q10</td><td>Are the LRs cleared at kernel start? In a back-to-back test the next kernel may start with the previous kernel's LR values.</td><td>Starting state for the generator's stop check.</td></tr>
 <tr><td>Q8</td><td>The Cache Unit itself is not under test. Its behaviour is modelled by the agent from the spec (tag rule, bank release, <code>jump_back</code>). The spec has a few inconsistencies (e.g. <code>FFFF</code> used both as a 14-bit tag and as an offset; <code>bank.tag = i</code> in §9.2) that the model must resolve.</td><td>Agent model details.</td></tr>
 </table>
 
 <h2>10. Milestones</h2>
 <ul>
 <li><b>M1</b> — APB agent with clock plumbing, probe agent + <code>ctrl_probe_if</code> mapping, directed program load, reference model for non-branch words, bus and probe scoreboards.</li>
-<li><b>M2</b> — Generator stages 1–3 and 6–7 (spine + guarded loops, LR ops only), branch model, no-bubble assertions.</li>
-<li><b>M3</b> — Register manager, loads, <code>BR</code> indirect jumps, <code>LRD</code> pairs, hazard knobs, APB error injection.</li>
+<li><b>M2</b> — Execution-guided generator with the state tracker (LR ops, COND ops, undo on loops), offline check of the tracker against the reference model, branch model, no-bubble assertions.</li>
+<li><b>M3</b> — Loads with legal table addresses, <code>BR</code> computed jumps, <code>LRD</code> pairs, hazard knobs, APB error injection.</li>
 <li><b>M4</b> — Cache Unit agent (tag model + fill modes, after Q1 is closed), load-address planner in the generator, REAL test (back-to-back kernels).</li>
 <li><b>M5</b> — Coverage closure and seed regression.</li>
 </ul>
